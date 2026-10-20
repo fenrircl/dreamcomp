@@ -1604,8 +1604,8 @@ void usage(const char* argv0, std::FILE* out) {
         "\n"
         "Reproducing a run:\n"
         "  --rtc-seed N           fix the console clock so two runs do the same thing\n"
-        "  --press B@F[,B@F...]   hold a button for 8 frames from frame F (a b c x y z start\n"
-        "                         up down left right), to get past screens that wait for input\n"
+        "  --press B@F[:N][,...]  hold a button for N frames (default 8) from frame F (a b c x y z\n"
+        "                         start up down left right), to get past screens that wait for input\n"
         "\n"
         "Reporting what happened:\n"
         "  --report FILE          write the end-of-run report to a file as well as stdout\n"
@@ -2270,8 +2270,14 @@ int main(int argc, char** argv) {
         }
     };
     sys.memory.map_mmio(dream::maple::Bus::kBase, dream::maple::Bus::kEnd, &maple);
-    // Scripted controller presses (--press start@120,a@300): each is held for 8 frames.
-    std::vector<std::pair<std::uint64_t, std::uint16_t>> scripted;
+    // Scripted controller presses (--press start@120,a@300 or a@300:1): each is held for 8 frames
+    // by default; `:N` overrides the hold, for menus that repeat while a direction is held.
+    struct ScriptedPress {
+        std::uint64_t start;
+        std::uint16_t bit;
+        std::uint32_t hold;
+    };
+    std::vector<ScriptedPress> scripted;
     {
         static const struct {
             const char* name;
@@ -2291,10 +2297,16 @@ int main(int argc, char** argv) {
             if (at == std::string::npos)
                 continue;
             const std::string name = one.substr(0, at);
-            const std::uint64_t frame = std::strtoull(one.c_str() + at + 1, nullptr, 0);
+            char* end = nullptr;
+            const std::uint64_t frame = std::strtoull(one.c_str() + at + 1, &end, 0);
+            std::uint32_t hold = 8;
+            if (end && *end == ':')
+                hold = static_cast<std::uint32_t>(std::strtoul(end + 1, nullptr, 0));
+            if (hold == 0)
+                hold = 1;
             for (const auto& n : kNames)
                 if (name == n.name)
-                    scripted.push_back({frame, n.bit});
+                    scripted.push_back({frame, n.bit, hold});
         }
     }
     sys.spg.on_vblank_out = [&] {
@@ -2302,9 +2314,9 @@ int main(int argc, char** argv) {
         if (!scripted.empty()) {
             const std::uint64_t f = sys.spg.frames();
             std::uint16_t held = 0;
-            for (const auto& [start, bit] : scripted)
-                if (f >= start && f < start + 8)
-                    held |= bit;
+            for (const auto& s : scripted)
+                if (f >= s.start && f < s.start + s.hold)
+                    held |= s.bit;
             pad_ptr->state.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
         }
         maple.vblank();
