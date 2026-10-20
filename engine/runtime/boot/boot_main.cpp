@@ -2578,9 +2578,11 @@ int main(int argc, char** argv) {
                             const auto budget = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                 sync.budget(period));
                             const auto lead = budget + sync.margin;
-                            auto next = sync.target.time_since_epoch().count() == 0
-                                            ? sync.target
-                                            : snap(sync.target + per);
+                            // Explicit type: the two branches of a ternary would be different
+                            // time_point reps under libstdc++ (long vs long long).
+                            std::chrono::steady_clock::time_point next = sync.target;
+                            if (sync.target.time_since_epoch().count() != 0)
+                                next = snap(sync.target + per);
                             if (next.time_since_epoch().count() == 0 || next - lead < now - per) {
                                 next = snap(now + lead + per / 2);
                                 if (sync.target.time_since_epoch().count() != 0)
