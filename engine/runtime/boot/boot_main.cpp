@@ -796,6 +796,8 @@ struct Live {
     // Its keys are the launcher's fixed ones, never the player's: rebinding the game's buttons can
     // never take away the way back out. Called once per poll, running or paused.
     void pump_menu() {
+        if (settings_requested.exchange(false) && !menu.is_open())
+            open_menu();
         using dream::render::vk::Control;
         // Escape does two things a keystroke apart: leave the screen, then end the run. The key has
         // to be let go before it means the second one. Without this, closing the screen with escape
@@ -1113,6 +1115,9 @@ struct Live {
     // looks (frames actually presented per second of wall clock) and whether it is keeping up
     // (guest time elapsed per second of wall clock, where 1.00x is the console's own pace).
     bool show_fps = false;
+    // Set by a guest hook (the game's menu) and consumed by pump_menu, so the panel never opens
+    // from inside guest code.
+    std::atomic<bool> settings_requested{false};
     bool input_polled = false, window_open = true;  // poll_input() (dreamcomp)
     DisplaySync sync;                                // --sync-display (dreamcomp)
     // The binding screen (F1, or a pad's select button). The guest is stopped while it is up, so
@@ -2391,6 +2396,7 @@ int main(int argc, char** argv) {
                 if (!lp->menu.is_open())
                     lp->open_menu();
             };
+            hc.open_settings = [lp] { lp->settings_requested = true; };
             hc.set_rumble = [lp](float v) { lp->window.rumble_scale = std::clamp(v, 0.0f, 1.0f); };
             hc.set_fullscreen = [lp](bool on) { lp->window.set_fullscreen(on); };
             hc.fullscreen = [lp] { return lp->window.fullscreen(); };

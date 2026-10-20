@@ -91,6 +91,7 @@ public:
 struct HostControls {
     std::function<void()> quit;                  // end the run, as closing the window does
     std::function<void()> open_bindings;         // the controller binding screen (F1)
+    std::function<void()> open_settings;         // the settings panel over the running game
     std::function<void(float)> set_rumble;       // 0..1
     std::function<void(bool)> set_fullscreen;
     std::function<bool()> fullscreen;
