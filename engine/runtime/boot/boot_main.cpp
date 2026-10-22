@@ -1557,6 +1557,8 @@ void usage(const char* argv0, std::FILE* out) {
         "  --scale N              draw at N times the guest's 640x480 (1 to 8, default 1)\n"
         "  --render-aspect A      render target shape for anamorphic widescreen (e.g. 1.7778)\n"
         "  --fullscreen           start fullscreen (Alt+Enter toggles)\n"
+        "  --keyboard             ignore gamepads and use the keyboard only\n"
+        "                         (default: a connected gamepad owns the input)\n"
         "  --interpolate          draw a blended frame between two game frames (needs a display\n"
         "                         above 60 Hz to be seen; docs/INTERPOLATION.md in dreamcomp)\n"
         "  --interpolate-auto     the same, only when the window's display is above 60 Hz\n"
@@ -1742,6 +1744,7 @@ int main(int argc, char** argv) {
     int volume_percent = 100;  // --volume N (dreamcomp): master output level
     bool soft_clip = false;    // --soft-clip (dreamcomp): round loud peaks off instead of clipping
     bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
+    bool keyboard_only = false;           // --keyboard (dreamcomp): ignore connected pads
     bool interpolate_frames = false;      // --interpolate (dreamcomp): a blended frame between renders
     bool interpolate_auto = false;        // --interpolate-auto: only on displays above 60 Hz
     bool sync_display = false;            // --sync-display (dreamcomp): pace at the display's rate
@@ -1939,6 +1942,8 @@ int main(int argc, char** argv) {
             render_aspect = std::strtof(argv[++i], nullptr);
         else if (!std::strcmp(argv[i], "--fullscreen"))
             fullscreen = true;
+        else if (!std::strcmp(argv[i], "--keyboard"))
+            keyboard_only = true;
         else if (!std::strcmp(argv[i], "--interpolate"))
             interpolate_frames = true;
         else if (!std::strcmp(argv[i], "--interpolate-auto"))
@@ -2360,6 +2365,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "window: %s\n", live->error.c_str());
             return 2;
         }
+        live->window.set_keyboard_only(keyboard_only);
         auto& replacer = live->renderer.textures().replacer();
         if (!texture_pack.empty()) {
             std::string err;

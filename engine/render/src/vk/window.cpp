@@ -512,6 +512,11 @@ bool Window::poll() {
                     }
                 break;
             case SDL_EVENT_KEY_DOWN:
+                // A connected pad owns the input: Steam Input can mirror buttons to
+                // keyboard keys (A->Start, B->Esc), and those must not drive the
+                // host menu or the guest alongside the pad.
+                if (!keyboard_only_ && !pads_.empty())
+                    break;
                 if (capturing_ && !captured_this_poll) {
                     captured_this_poll = true;
                     captured_ = true;
@@ -531,6 +536,8 @@ bool Window::poll() {
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                if (keyboard_only_)
+                    break;
                 if (capturing_ && !captured_this_poll) {
                     if (const char* n = SDL_GetGamepadStringForButton(
                             static_cast<SDL_GamepadButton>(ev.gbutton.button));
@@ -543,6 +550,8 @@ bool Window::poll() {
                 }
                 break;
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                if (keyboard_only_)
+                    break;
                 // Well past any plausible dead zone, so resting drift never binds an axis by
                 // itself while the user is thinking about which button to press.
                 if (capturing_ && !captured_this_poll && std::abs(ev.gaxis.value) > 20000) {
@@ -563,11 +572,13 @@ bool Window::poll() {
 
     // Read the whole keyboard rather than tracking key events: a frame wants the state as it is
     // now, and a key pressed and released between two polls should not be missed or repeated.
-    const bool* keys = SDL_GetKeyboardState(nullptr);
+    // One source at a time: a connected pad owns the input; --keyboard forces the reverse.
+    const bool keyboard_allowed = keyboard_only_ || pads_.empty();
+    const bool* keys = keyboard_allowed ? SDL_GetKeyboardState(nullptr) : nullptr;
     for (unsigned i = 0; i < static_cast<unsigned>(Control::Count); ++i) {
         const bool was = held_[i];
-        bool now = keys && keys[kScancodes[i]];
-        if (kNavButtons[i] != SDL_GAMEPAD_BUTTON_INVALID &&
+        bool now = keyboard_allowed && keys && keys[kScancodes[i]];
+        if (!keyboard_only_ && kNavButtons[i] != SDL_GAMEPAD_BUTTON_INVALID &&
             (pad_menu_button_ || i != static_cast<unsigned>(Control::Menu)))
             for (SDL_Gamepad* g : pads_)
                 if (g && SDL_GetGamepadButton(g, kNavButtons[i]))
@@ -598,9 +609,10 @@ bool Window::poll() {
             for (unsigned s = 0; s < kBindingSlots; ++s) {
             const Resolved& kb = key_[s][i];
             const Resolved& gb = gpad_[s][i];
-            if (p == 0 && keys && kb.source == BindSource::Key && keys[kb.code])
+            if (keyboard_allowed && p == 0 && keys && kb.source == BindSource::Key && keys[kb.code])
                 digital_on = true;
-            if (SDL_Gamepad* g = player_pad) {
+            SDL_Gamepad* const g = keyboard_only_ ? nullptr : player_pad;
+            if (g) {
                 if (gb.source == BindSource::Button) {
                     if (SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(gb.code)))
                         digital_on = true;

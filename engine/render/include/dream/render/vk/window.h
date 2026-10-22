@@ -119,6 +119,11 @@ public:
     // the press either way.
     void set_escape_quits(bool yes) noexcept { escape_quits_ = yes; }
     bool escape_quits() const noexcept { return escape_quits_; }
+    // Input-source exclusivity (dreamcomp): by default a connected gamepad owns the
+    // input and the keyboard is ignored, so Steam Input's keyboard mirror cannot open
+    // a menu alongside the pad. `--keyboard` forces the opposite.
+    void set_keyboard_only(bool yes) noexcept { keyboard_only_ = yes; }
+    bool keyboard_only() const noexcept { return keyboard_only_; }
 
     // Host overlays (dreamcomp). `event_filter`, when set, sees every SDL_Event first (passed as
     // `const SDL_Event*`); returning true consumes it, so poll() does nothing else with it. The
@@ -256,6 +261,7 @@ private:
     bool capturing_ = false, captured_ = false, capture_cancelled_ = false;
     bool escape_quits_ = true;
     bool pad_menu_button_ = true;
+    bool keyboard_only_ = false;
     bool game_input_blocked_ = false;
     PresentMode wanted_present_ = PresentMode::Fifo;
     PresentPath wanted_path_ = PresentPath::Auto;
