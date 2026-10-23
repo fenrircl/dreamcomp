@@ -127,6 +127,13 @@ public:
         vram_dirty_.fill(0);
     }
     std::uint8_t* aram() noexcept { return aram_.get(); }
+    std::uint8_t* ocram() noexcept { return ocram_.get(); }
+    // After restoring a debug save state, every VRAM page must be treated as new:
+    // the texture cache may still hold images from the pre-load timeline.
+    void mark_all_vram_dirty() noexcept {
+        vram_dirty_.fill(~0ull);
+        vram_any_dirty_ = true;
+    }
     std::uint8_t* bios() noexcept { return bios_.get(); }
     std::uint8_t* flash() noexcept { return flash_.get(); }
     FaultLog& faults() noexcept { return faults_; }

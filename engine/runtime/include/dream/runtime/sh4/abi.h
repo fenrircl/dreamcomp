@@ -65,6 +65,10 @@ void call_indirect(Ctx& c, ::dream::Memory& m, std::uint32_t target);
 void resume_at(Ctx& c, ::dream::Memory& m, std::uint32_t pc);
 void resume_miss(Ctx& c, ::dream::Memory& m, std::uint32_t pc);
 void run_guest(Ctx& c, ::dream::Memory& m, std::uint32_t entry);
+// Resume at an arbitrary saved pc, entering the translated function that contains it.
+// Used by the debug save-state loader; unlike run_guest(entry), `pc` need not be a
+// function boundary.
+void run_guest_resume(Ctx& c, ::dream::Memory& m, std::uint32_t pc);
 // Same, starting from a function pointer (the test harness links many programs at one base).
 void run_guest(Ctx& c, ::dream::Memory& m, GuestFn entry);
 

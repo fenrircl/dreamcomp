@@ -300,6 +300,10 @@ void run_guest(Ctx& c, ::dream::Memory& m, GuestFn entry) {
     run_guest_impl(c, m, [&] { entry(c, m); });
 }
 
+void run_guest_resume(Ctx& c, ::dream::Memory& m, std::uint32_t pc) {
+    run_guest_impl(c, m, [&] { resume_at(c, m, pc); });
+}
+
 void call_indirect(Ctx& c, ::dream::Memory& m, std::uint32_t target) {
     if (GuestFn fn = find_function(target, &m)) {
         fn(c, m);

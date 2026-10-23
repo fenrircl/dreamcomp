@@ -36,6 +36,20 @@ public:
     const std::string& name(int id) const { return events_[static_cast<std::size_t>(id)].name; }
     std::size_t events() const noexcept { return events_.size(); }
 
+    // Debug checkpoint support: deadlines are per-event and callbacks are already
+    // registered by the time a state is loaded.
+    void save_state(std::uint64_t& now, std::vector<std::uint64_t>& deadlines) const {
+        now = now_;
+        deadlines = deadlines_;
+    }
+    bool restore_state(std::uint64_t now, const std::vector<std::uint64_t>& deadlines) {
+        if (deadlines.size() != deadlines_.size())
+            return false;
+        now_ = now;
+        deadlines_ = deadlines;
+        return true;
+    }
+
     // Host-time profile per event (dreamcomp): with `profile` on, the wall time each event's
     // callback takes is summed (outermost callback only, so nesting never double counts).
     // Everything not inside a callback is translated guest code and the launcher loop.

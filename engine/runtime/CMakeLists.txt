@@ -16,6 +16,7 @@ add_library(dream_runtime STATIC
   src/pvr/spg.cpp
   src/pvr/core.cpp
   src/system.cpp
+  src/save_state.cpp
   src/gdrom/disc.cpp
   src/gdrom/mod_disc.cpp
   src/hle/flash.cpp

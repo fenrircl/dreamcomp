@@ -39,6 +39,7 @@
 #include "dream/runtime/maple/maple.h"
 #include "dream/runtime/mem/dc_memory.h"
 #include "dream/runtime/pvr/core.h"
+#include "dream/runtime/save_state.h"
 #include "dream/runtime/sh4/abi.h"
 #include "dream/runtime/sh4/dmac.h"
 #include "dream/runtime/sh4/ops.h"
@@ -1603,6 +1604,9 @@ void usage(const char* argv0, std::FILE* out) {
         "                         or it faults.\n"
         "  --max-seconds S        stop after S seconds of guest time\n"
         "  --stop-on-ta           stop at the first display-list write\n"
+        "  --save-state FILE      write a debug checkpoint (memory + SH-4 + PVR regs)\n"
+        "  --save-state-at N      frame at which --save-state writes the checkpoint\n"
+        "  --load-state FILE      resume a debug checkpoint at startup\n"
         "\n"
         "Reproducing a run:\n"
         "  --rtc-seed N           fix the console clock so two runs do the same thing\n"
@@ -1763,6 +1767,10 @@ int main(int argc, char** argv) {
     // frame, so a headless run can get past "press start" screens. Names: a b c x y z start up
     // down left right.
     std::string presses;
+    // Debug checkpoint (dreamcomp): a local state file, not a VMU save and not
+    // compatible with an emulator state.
+    std::string save_state_path, load_state_path;
+    std::uint64_t save_state_at = 0;
     // --window: open a window and play. Without it the run is headless exactly as before.
     // --scale N draws the geometry at N times the guest's resolution; the frame is resampled back
     // into the guest's framebuffer, so the guest never learns its screen changed size.
@@ -1886,6 +1894,12 @@ int main(int argc, char** argv) {
             dump_ta_count = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--press") && i + 1 < argc)
             presses = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-state") && i + 1 < argc)
+            save_state_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-state-at") && i + 1 < argc)
+            save_state_at = std::strtoull(argv[++i], nullptr, 0);
+        else if (!std::strcmp(argv[i], "--load-state") && i + 1 < argc)
+            load_state_path = argv[++i];
         else if (!std::strcmp(argv[i], "--max-seconds") && i + 1 < argc)
             max_seconds = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--window"))
@@ -2899,6 +2913,38 @@ int main(int argc, char** argv) {
         return e && *e && *e != '0';
     }();
     sys.sched.profile = host_profile;
+    bool loaded_state = false;
+    if (!load_state_path.empty()) {
+        std::uint64_t loaded_frame = 0;
+        std::string error;
+        if (!dream::save::load_state(load_state_path, sys, pvr, &loaded_frame, &error)) {
+            std::fprintf(stderr, "save state: %s\n", error.c_str());
+            return 2;
+        }
+        loaded_state = true;
+        std::printf("save state: loaded %s (frame %llu)\n", load_state_path.c_str(),
+                    static_cast<unsigned long long>(loaded_frame));
+    }
+    if (!save_state_path.empty() && save_state_at == 0) {
+        std::fprintf(stderr, "--save-state needs --save-state-at N\n");
+        return 2;
+    }
+    if (!save_state_path.empty()) {
+        auto previous_vblank = std::move(sys.spg.on_vblank_out);
+        sys.spg.on_vblank_out = [&, previous_vblank]() {
+            if (previous_vblank)
+                previous_vblank();
+            if (save_state_at != 0 && sys.spg.frames() >= save_state_at) {
+                std::string error;
+                if (dream::save::save_state(save_state_path, sys, pvr, sys.spg.frames(), &error))
+                    std::printf("save state: wrote %s at frame %llu\n", save_state_path.c_str(),
+                                static_cast<unsigned long long>(sys.spg.frames()));
+                else
+                    std::fprintf(stderr, "save state: %s\n", error.c_str());
+                save_state_at = 0;
+            }
+        };
+    }
     for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
     auto run_title = [&] {
@@ -2922,7 +2968,8 @@ int main(int argc, char** argv) {
             iopt.native_lo = dream::hle::Bios::kHookSystem;
             iopt.native_hi = dream::hle::Bios::kHookGd2 + 2;
             sys.interpret_all = true;
-            sys.ctx.pc = cfg.entry;
+            if (!loaded_state)
+                sys.ctx.pc = cfg.entry;
             // A cooperative task switch abandons the guest context it was running in: rte()
             // throws NonLocalReturn past every host frame between there and here. run_guest()
             // drives that loop for translated code, and this path does not go through it, so
@@ -2945,7 +2992,10 @@ int main(int argc, char** argv) {
         {
             (void)interpret_all;
             (void)entry;
-            dream::sh4::run_guest(sys.ctx, sys.memory, cfg.entry);
+            if (loaded_state)
+                dream::sh4::run_guest_resume(sys.ctx, sys.memory, sys.ctx.pc);
+            else
+                dream::sh4::run_guest(sys.ctx, sys.memory, cfg.entry);
         }
     } catch (const StopRun& s) {
         stop = s.why;

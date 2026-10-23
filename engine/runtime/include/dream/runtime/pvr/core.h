@@ -88,6 +88,19 @@ public:
     // The whole register block, for callers that need several registers as a unit: describing the
     // framebuffer takes four of them, and palette memory lives at offset 0x1000 inside it.
     const std::uint32_t* reg_block() const noexcept { return regs_.data(); }
+    // Debug save-state support: the register block is plain state. The FIFO parser is
+    // not restored yet; a load starts a fresh FIFO and lets the guest program the PVR
+    // again from its restored memory. Do not call this while a render is in flight.
+    void save_regs(std::uint32_t* out) const noexcept {
+        for (std::size_t i = 0; i < regs_.size(); ++i)
+            out[i] = regs_[i];
+    }
+    void restore_regs(const std::uint32_t* in) noexcept {
+        for (std::size_t i = 0; i < regs_.size(); ++i)
+            regs_[i] = in[i];
+        fifo_fill_ = 0;
+        seen_ta_data_ = false;
+    }
 
     Ta ta;
     std::function<void()> on_first_ta_data;
