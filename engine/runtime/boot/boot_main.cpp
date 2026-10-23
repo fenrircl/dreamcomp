@@ -21,6 +21,7 @@
 #endif
 #include <ctime>
 #include <fstream>
+#include <filesystem>
 #include <iterator>
 #include <set>
 #include <string>
@@ -71,6 +72,9 @@ namespace {
 
 struct StopRun {
     const char* why;
+};
+struct StateReload {
+    std::string path;
 };
 
 // The guest program counter in the context is only refreshed where the emitted code checks for an
@@ -309,6 +313,11 @@ struct Pacing {
 struct Live {
     Live(dream::mem::DcMemory& memory, const dream::pvr::Core& pvr) : memory_(memory), pvr_(pvr) {}
     Pacing pacing;
+    // Debug checkpoint callbacks: F5 saves the current slot, F9 unwinds and loads it,
+    // F6 advances to the next slot.
+    std::function<void()> save_state;
+    std::function<void()> load_state;
+    std::function<void()> next_state_slot;
 
     // `scale` multiplies the resolution the geometry is drawn at. The frame is resampled back to
     // the guest's own framebuffer on the way into video memory, so a higher setting sharpens the
@@ -800,6 +809,12 @@ struct Live {
         if (settings_requested.exchange(false) && !menu.is_open())
             open_menu();
         using dream::render::vk::Control;
+        if (window.pressed(Control::SaveState) && save_state)
+            save_state();
+        if (window.pressed(Control::LoadState) && load_state)
+            load_state();
+        if (window.pressed(Control::NextStateSlot) && next_state_slot)
+            next_state_slot();
         // Escape does two things a keystroke apart: leave the screen, then end the run. The key has
         // to be let go before it means the second one. Without this, closing the screen with escape
         // re-arms quit under a finger that is still down, and one key repeat ends the run -- which
@@ -1607,6 +1622,9 @@ void usage(const char* argv0, std::FILE* out) {
         "  --save-state FILE      write a debug checkpoint (memory + SH-4 + PVR regs)\n"
         "  --save-state-at N      frame at which --save-state writes the checkpoint\n"
         "  --load-state FILE      resume a debug checkpoint at startup\n"
+        "  --state-dir DIR        directory for F5/F6/F9 slots (default: states)\n"
+        "  --state-slot N         starting slot for F5/F6/F9 (default: 0)\n"
+        "  F5 / F9 / F6           save / load / next checkpoint slot (windowed debug)\n"
         "\n"
         "Reproducing a run:\n"
         "  --rtc-seed N           fix the console clock so two runs do the same thing\n"
@@ -1771,6 +1789,8 @@ int main(int argc, char** argv) {
     // compatible with an emulator state.
     std::string save_state_path, load_state_path;
     std::uint64_t save_state_at = 0;
+    std::string state_dir = "states";
+    unsigned state_slot = 0;
     // --window: open a window and play. Without it the run is headless exactly as before.
     // --scale N draws the geometry at N times the guest's resolution; the frame is resampled back
     // into the guest's framebuffer, so the guest never learns its screen changed size.
@@ -1900,6 +1920,10 @@ int main(int argc, char** argv) {
             save_state_at = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--load-state") && i + 1 < argc)
             load_state_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--state-dir") && i + 1 < argc)
+            state_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--state-slot") && i + 1 < argc)
+            state_slot = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--max-seconds") && i + 1 < argc)
             max_seconds = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--window"))
@@ -2945,6 +2969,28 @@ int main(int argc, char** argv) {
             }
         };
     }
+    auto slot_path = [&] {
+        std::error_code ec;
+        std::filesystem::create_directories(state_dir, ec);
+        return (std::filesystem::path(state_dir) /
+                ("slot" + std::to_string(state_slot) + ".state")).string();
+    };
+    if (live) {
+        live->save_state = [&] {
+            const std::string path = slot_path();
+            std::string error;
+            if (dream::save::save_state(path, sys, pvr, sys.spg.frames(), &error))
+                std::printf("checkpoint: saved slot %u at frame %llu -> %s\n", state_slot,
+                            static_cast<unsigned long long>(sys.spg.frames()), path.c_str());
+            else
+                std::fprintf(stderr, "checkpoint: %s\n", error.c_str());
+        };
+        live->load_state = [&] { throw StateReload{slot_path()}; };
+        live->next_state_slot = [&] {
+            ++state_slot;
+            std::printf("checkpoint: slot %u selected (%s)\n", state_slot, slot_path().c_str());
+        };
+    }
     for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
     auto run_title = [&] {
@@ -3006,6 +3052,31 @@ int main(int argc, char** argv) {
         rc = 1;
     }
     };
+    // F9 asks for a checkpoint load. The request is thrown from the vblank callback,
+    // unwinds out of the guest, and is handled here where the host stack is safe to
+    // replace. Then the title is re-entered at the saved PC.
+    auto run_with_reload = [&] {
+        for (;;) {
+            try {
+                run_title();
+                return;
+            } catch (const StateReload& r) {
+                std::uint64_t loaded_frame = 0;
+                std::string error;
+                if (!dream::save::load_state(r.path, sys, pvr, &loaded_frame, &error)) {
+                    std::fprintf(stderr, "checkpoint: %s\n", error.c_str());
+                    stop = "checkpoint load failed";
+                    rc = 1;
+                    return;
+                }
+                loaded_state = true;
+                if (live)
+                    live->renderer.textures().invalidate();
+                std::printf("checkpoint: loaded %s (frame %llu)\n", r.path.c_str(),
+                            static_cast<unsigned long long>(loaded_frame));
+            }
+        }
+    };
 #ifdef DREAM_WITH_RENDERER
     // dreamcomp: with a window, the guest runs on its own thread and this one only pumps window
     // events, so moving or resizing the window (a modal loop on Windows) does not stop the game.
@@ -3018,7 +3089,7 @@ int main(int argc, char** argv) {
         live->window.set_threaded(true);
         std::atomic<bool> guest_done{false};
         std::thread guest([&] {
-            run_title();
+            run_with_reload();
             guest_done = true;
         });
         while (!guest_done.load()) live->window.pump_events(5);
@@ -3026,7 +3097,7 @@ int main(int argc, char** argv) {
         live->window.set_threaded(false);
     } else
 #endif
-        run_title();
+        run_with_reload();
     for (auto* e : dream::host::extensions()) e->on_stop(sys, stop);
     const double host_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

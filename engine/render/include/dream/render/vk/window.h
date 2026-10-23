@@ -51,6 +51,9 @@ enum class Control : unsigned {
     ToggleFps,
     Menu,
     Back,
+    SaveState,
+    LoadState,
+    NextStateSlot,
     Count
 };
 

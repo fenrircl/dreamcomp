@@ -32,6 +32,7 @@ constexpr SDL_Scancode kScancodes[static_cast<unsigned>(Control::Count)] = {
     SDL_SCANCODE_Z,      SDL_SCANCODE_X,    SDL_SCANCODE_A,    SDL_SCANCODE_S,
     SDL_SCANCODE_RETURN, SDL_SCANCODE_Q,    SDL_SCANCODE_W,    SDL_SCANCODE_F12,
     SDL_SCANCODE_F11,    SDL_SCANCODE_F10,  SDL_SCANCODE_F1,   SDL_SCANCODE_ESCAPE,
+    SDL_SCANCODE_F5,     SDL_SCANCODE_F9,   SDL_SCANCODE_F6,
 };
 
 // The same controls on a pad, so somebody rebinding a pad does not have to reach for the keyboard
@@ -45,7 +46,8 @@ constexpr SDL_GamepadButton kNavButtons[static_cast<unsigned>(Control::Count)] =
     SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_START,
     SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_INVALID,
     SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_BACK,
-    SDL_GAMEPAD_BUTTON_EAST,
+    SDL_GAMEPAD_BUTTON_EAST,       SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_INVALID,
+    SDL_GAMEPAD_BUTTON_INVALID,
 };
 }  // namespace
 
@@ -574,10 +576,13 @@ bool Window::poll() {
     // now, and a key pressed and released between two polls should not be missed or repeated.
     // One source at a time: a connected pad owns the input; --keyboard forces the reverse.
     const bool keyboard_allowed = keyboard_only_ || pads_.empty();
-    const bool* keys = keyboard_allowed ? SDL_GetKeyboardState(nullptr) : nullptr;
+    const bool* keys = SDL_GetKeyboardState(nullptr);
     for (unsigned i = 0; i < static_cast<unsigned>(Control::Count); ++i) {
         const bool was = held_[i];
-        bool now = keyboard_allowed && keys && keys[kScancodes[i]];
+        // F5/F9/F6 are debug keys, not gameplay bindings. Keep them available even
+        // when a connected pad owns the game input.
+        const bool debug_key = i >= static_cast<unsigned>(Control::SaveState);
+        bool now = (keyboard_allowed || debug_key) && keys && keys[kScancodes[i]];
         if (!keyboard_only_ && kNavButtons[i] != SDL_GAMEPAD_BUTTON_INVALID &&
             (pad_menu_button_ || i != static_cast<unsigned>(Control::Menu)))
             for (SDL_Gamepad* g : pads_)
