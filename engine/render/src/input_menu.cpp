@@ -59,6 +59,12 @@ InputMenu::Action InputMenu::activate() {
         return Action::None;
     if (row_ == close_row())
         return Action::Close;
+    if (row_ == save_row())
+        return Action::SaveState;
+    if (row_ == load_row())
+        return Action::LoadState;
+    if (row_ == slot_row())
+        return Action::NextSlot;
     if (row_ == reset_row()) {
         // Only this device's set, so resetting the keyboard cannot silently discard a pad layout
         // somebody spent longer on.
@@ -180,6 +186,9 @@ void InputMenu::draw(u32* rgba, unsigned pitch, unsigned width, unsigned height,
 
     y += static_cast<int>(s) * 2;
     row(reset_row(), "RESET THIS DEVICE", "");
+    row(save_row(), "SAVE DEBUG STATE", "F5");
+    row(load_row(), "LOAD DEBUG STATE", "F9");
+    row(slot_row(), "NEXT DEBUG SLOT", "F6");
     row(close_row(), "CLOSE", "");
 
     // The footer says how to work the screen, because the screen is the only place that says it.

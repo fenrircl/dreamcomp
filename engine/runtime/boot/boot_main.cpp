@@ -863,10 +863,17 @@ struct Live {
         if (window.pressed(Control::Right))
             menu.adjust(1, devices);
         if (window.pressed(Control::Start) || window.pressed(Control::A)) {
-            if (menu.activate() == dream::render::InputMenu::Action::Close) {
+            const auto action = menu.activate();
+            if (action == dream::render::InputMenu::Action::Close) {
                 close_menu();
                 return;
             }
+            if (action == dream::render::InputMenu::Action::SaveState && save_state)
+                save_state();
+            else if (action == dream::render::InputMenu::Action::LoadState && load_state)
+                load_state();
+            else if (action == dream::render::InputMenu::Action::NextSlot && next_state_slot)
+                next_state_slot();
             // Activating a binding row asks for an input; the window collects it for us.
             if (menu.awaiting())
                 window.begin_capture();
@@ -2985,7 +2992,14 @@ int main(int argc, char** argv) {
             else
                 std::fprintf(stderr, "checkpoint: %s\n", error.c_str());
         };
-        live->load_state = [&] { throw StateReload{slot_path()}; };
+        live->load_state = [&] {
+            const std::string path = slot_path();
+            if (!std::filesystem::is_regular_file(path)) {
+                std::fprintf(stderr, "checkpoint: no state at %s\n", path.c_str());
+                return;
+            }
+            throw StateReload{path};
+        };
         live->next_state_slot = [&] {
             ++state_slot;
             std::printf("checkpoint: slot %u selected (%s)\n", state_slot, slot_path().c_str());
@@ -3064,10 +3078,13 @@ int main(int argc, char** argv) {
                 std::uint64_t loaded_frame = 0;
                 std::string error;
                 if (!dream::save::load_state(r.path, sys, pvr, &loaded_frame, &error)) {
+                    // The guest has been unwound to the vblank; keep the session alive and
+                    // resume from the current context instead of closing the game.
                     std::fprintf(stderr, "checkpoint: %s\n", error.c_str());
-                    stop = "checkpoint load failed";
-                    rc = 1;
-                    return;
+                    loaded_state = true;
+                    if (live)
+                        live->renderer.textures().invalidate();
+                    continue;
                 }
                 loaded_state = true;
                 if (live)
