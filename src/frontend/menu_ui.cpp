@@ -669,6 +669,20 @@ std::string MenuUi::tab_general() {
                    "one frame twice about every 17 seconds.",
                    false);
     s += row_button("r-about", "readme", "About", "Read me", kAboutText);
+    if (mode_ == Mode::InGame && host_.save_state) {
+        s += "<div class=\"psep\"></div>";
+        s += row_button("r-state-save", "state-save", "Save debug state", "F5",
+                        "Write a checkpoint of the running game to the current slot. This is a "
+                        "local dreamcomp state, not a VMU save.",
+                        true);
+        s += row_button("r-state-load", "state-load", "Load debug state", "F9",
+                        "Restore the current checkpoint in place. Only checkpoints written by "
+                        "this build can be loaded.",
+                        true);
+        s += row_button("r-state-slot", "state-next", "Checkpoint slot",
+                        host_.state_slot ? host_.state_slot() : std::string(),
+                        "Select the slot used by Save/Load and by F5/F9. F6 advances it too.", true);
+    }
     return s;
 }
 
@@ -1329,6 +1343,16 @@ void MenuUi::run_act(const std::string& act, Rml::Event* ev) {
                                     ? file_url(local)
                                     : "https://github.com/danielgomesvieira2000/dreamcomp#readme";
         SDL_OpenURL(url.c_str());
+    } else if (kind == "state-save") {
+        if (host_.save_state)
+            host_.save_state();
+    } else if (kind == "state-load") {
+        if (host_.load_state)
+            host_.load_state();
+    } else if (kind == "state-next") {
+        if (host_.next_state_slot)
+            host_.next_state_slot();
+        dirty_ = true;
     } else if (kind == "ctl-edit") {
         const unsigned p = static_cast<unsigned>(std::atoi(arg.c_str()));
         ctl_view_ = 1;
@@ -1686,6 +1710,13 @@ void MenuUi::tick() {
     if (!toast_.empty() && SDL_GetTicks() >= toast_until_) {
         toast_.clear();
         dirty_ = true;
+    }
+    if (mode_ == Mode::InGame && host_.state_slot) {
+        const std::string selected = host_.state_slot();
+        if (selected != observed_state_slot_) {
+            observed_state_slot_ = selected;
+            dirty_ = true;
+        }
     }
     if (dirty_)
         rebuild();

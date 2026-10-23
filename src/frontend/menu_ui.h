@@ -47,6 +47,11 @@ struct UiHost {
     // rewrote it, a call to make the running game use it.
     std::function<std::string()> bindings_path;
     std::function<void()> bindings_changed;
+    // InGame debug checkpoint: requests are queued to the guest thread by the overlay.
+    std::function<void()> save_state;
+    std::function<void()> load_state;
+    std::function<void()> next_state_slot;
+    std::function<std::string()> state_slot;
 };
 
 struct UiConfig {
@@ -203,6 +208,7 @@ private:
     int stick_x_ = 0, stick_y_ = 0;
 
     std::string toast_;
+    std::string observed_state_slot_;
     std::uint64_t toast_until_ = 0;
     std::string last_focus_, want_focus_;
     bool dirty_ = true, redraw_ = true, focus_first_ = true;

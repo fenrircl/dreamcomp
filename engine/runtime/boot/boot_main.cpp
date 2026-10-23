@@ -318,6 +318,12 @@ struct Live {
     std::function<void()> save_state;
     std::function<void()> load_state;
     std::function<void()> next_state_slot;
+    // The in-game settings panel runs on the window thread. It asks the guest thread to perform a
+    // checkpoint action at the next vblank instead of touching the VM or throwing StateReload from
+    // the wrong thread.
+    std::atomic<bool> request_save{false};
+    std::atomic<bool> request_load{false};
+    std::atomic<bool> request_next_slot{false};
 
     // `scale` multiplies the resolution the geometry is drawn at. The frame is resampled back to
     // the guest's own framebuffer on the way into video memory, so a higher setting sharpens the
@@ -575,6 +581,11 @@ struct Live {
     // Vertical blank: show what the video hardware would be scanning out, and read the keyboard.
     // Returns false when the user has closed the window.
     bool present(std::uint64_t frame, std::uint64_t guest_cycles) {
+        static const bool trace_frames = std::getenv("DREAM_TRACE_FRAMES") != nullptr;
+        if (trace_frames && frame % 60 == 0)
+            std::fprintf(stderr, "present: frame %llu cycles %llu\n",
+                         static_cast<unsigned long long>(frame),
+                         static_cast<unsigned long long>(guest_cycles));
         guest_frame = frame;
         if (!input_polled)
             poll_input();
@@ -809,6 +820,12 @@ struct Live {
         if (settings_requested.exchange(false) && !menu.is_open())
             open_menu();
         using dream::render::vk::Control;
+        if (request_save.exchange(false) && save_state)
+            save_state();
+        if (request_load.exchange(false) && load_state)
+            load_state();
+        if (request_next_slot.exchange(false) && next_state_slot)
+            next_state_slot();
         if (window.pressed(Control::SaveState) && save_state)
             save_state();
         if (window.pressed(Control::LoadState) && load_state)
@@ -822,6 +839,14 @@ struct Live {
         if (rearm_escape && !window.held(Control::Back)) {
             rearm_escape = false;
             window.set_escape_quits(overlays.empty());  // an overlay owns escape (dreamcomp)
+        }
+        // With an overlay active, Escape is the player's menu key. The overlay itself consumes it
+        // and shows the in-game settings panel; only when no overlay took the key does the engine
+        // open its controller screen (whose checkpoint rows remain available for debug builds).
+        if (!overlays.empty() && !menu.is_open() && !overlay_open() &&
+            window.pressed(Control::Back)) {
+            open_menu();
+            return;
         }
         // dreamcomp: an overlay host has its own controls screen and gives F1 to the HUD editor.
         // The key is polled here, not taken from the event the overlay consumed, so it has to be
@@ -1796,8 +1821,9 @@ int main(int argc, char** argv) {
     // compatible with an emulator state.
     std::string save_state_path, load_state_path;
     std::uint64_t save_state_at = 0;
+    constexpr unsigned kStateSlotCount = 10;
     std::string state_dir = "states";
-    unsigned state_slot = 0;
+    std::atomic<unsigned> state_slot{0};
     // --window: open a window and play. Without it the run is headless exactly as before.
     // --scale N draws the geometry at N times the guest's resolution; the frame is resampled back
     // into the guest's framebuffer, so the guest never learns its screen changed size.
@@ -1930,7 +1956,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--state-dir") && i + 1 < argc)
             state_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--state-slot") && i + 1 < argc)
-            state_slot = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
+            state_slot = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0)) %
+                         kStateSlotCount;
         else if (!std::strcmp(argv[i], "--max-seconds") && i + 1 < argc)
             max_seconds = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--window"))
@@ -2460,6 +2487,13 @@ int main(int argc, char** argv) {
                     lp->open_menu();
             };
             hc.open_settings = [lp] { lp->settings_requested = true; };
+            hc.save_state = [lp] { lp->request_save = true; };
+            hc.load_state = [lp] { lp->request_load = true; };
+            hc.next_state_slot = [lp] { lp->request_next_slot = true; };
+            hc.state_slot = [&state_slot] {
+                return "Slot " + std::to_string(state_slot.load() % kStateSlotCount + 1) + "/" +
+                       std::to_string(kStateSlotCount);
+            };
             hc.set_rumble = [lp](float v) { lp->window.rumble_scale = std::clamp(v, 0.0f, 1.0f); };
             hc.set_fullscreen = [lp](bool on) { lp->window.set_fullscreen(on); };
             hc.fullscreen = [lp] { return lp->window.fullscreen(); };
@@ -2948,7 +2982,7 @@ int main(int argc, char** argv) {
     if (!load_state_path.empty()) {
         std::uint64_t loaded_frame = 0;
         std::string error;
-        if (!dream::save::load_state(load_state_path, sys, pvr, &loaded_frame, &error)) {
+        if (!dream::save::load_state(load_state_path, sys, pvr, aica, bios, &loaded_frame, &error)) {
             std::fprintf(stderr, "save state: %s\n", error.c_str());
             return 2;
         }
@@ -2967,7 +3001,7 @@ int main(int argc, char** argv) {
                 previous_vblank();
             if (save_state_at != 0 && sys.spg.frames() >= save_state_at) {
                 std::string error;
-                if (dream::save::save_state(save_state_path, sys, pvr, sys.spg.frames(), &error))
+                if (dream::save::save_state(save_state_path, sys, pvr, aica, bios, sys.spg.frames(), &error))
                     std::printf("save state: wrote %s at frame %llu\n", save_state_path.c_str(),
                                 static_cast<unsigned long long>(sys.spg.frames()));
                 else
@@ -2980,14 +3014,14 @@ int main(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::create_directories(state_dir, ec);
         return (std::filesystem::path(state_dir) /
-                ("slot" + std::to_string(state_slot) + ".state")).string();
+                ("slot" + std::to_string(state_slot.load() % kStateSlotCount) + ".state")).string();
     };
     if (live) {
         live->save_state = [&] {
             const std::string path = slot_path();
             std::string error;
-            if (dream::save::save_state(path, sys, pvr, sys.spg.frames(), &error))
-                std::printf("checkpoint: saved slot %u at frame %llu -> %s\n", state_slot,
+            if (dream::save::save_state(path, sys, pvr, aica, bios, sys.spg.frames(), &error))
+                std::printf("checkpoint: saved slot %u at frame %llu -> %s\n", state_slot.load(),
                             static_cast<unsigned long long>(sys.spg.frames()), path.c_str());
             else
                 std::fprintf(stderr, "checkpoint: %s\n", error.c_str());
@@ -3001,8 +3035,9 @@ int main(int argc, char** argv) {
             throw StateReload{path};
         };
         live->next_state_slot = [&] {
-            ++state_slot;
-            std::printf("checkpoint: slot %u selected (%s)\n", state_slot, slot_path().c_str());
+            const unsigned selected = (state_slot.fetch_add(1) + 1) % kStateSlotCount;
+            std::printf("checkpoint: slot %u/%u selected (%s)\n", selected + 1,
+                        kStateSlotCount, slot_path().c_str());
         };
     }
     for (auto* e : dream::host::extensions()) e->on_start(sys);
@@ -3065,6 +3100,7 @@ int main(int argc, char** argv) {
                      static_cast<void*>(dream::sh4::hooks()), static_cast<void*>(&sys));
         rc = 1;
     }
+    std::fprintf(stderr, "checkpoint: run_title finished (stop: %s, rc %d)\n", stop, rc);
     };
     // F9 asks for a checkpoint load. The request is thrown from the vblank callback,
     // unwinds out of the guest, and is handled here where the host stack is safe to
@@ -3073,11 +3109,13 @@ int main(int argc, char** argv) {
         for (;;) {
             try {
                 run_title();
+                std::fprintf(stderr, "checkpoint: run_title returned\n");
                 return;
             } catch (const StateReload& r) {
+                std::fprintf(stderr, "checkpoint: reload requested -> %s\n", r.path.c_str());
                 std::uint64_t loaded_frame = 0;
                 std::string error;
-                if (!dream::save::load_state(r.path, sys, pvr, &loaded_frame, &error)) {
+                if (!dream::save::load_state(r.path, sys, pvr, aica, bios, &loaded_frame, &error)) {
                     // The guest has been unwound to the vblank; keep the session alive and
                     // resume from the current context instead of closing the game.
                     std::fprintf(stderr, "checkpoint: %s\n", error.c_str());

@@ -268,6 +268,44 @@ void Arm7::set_enabled(bool on) {
     enabled_ = on;
 }
 
+Arm7::SavedState Arm7::save_state() const noexcept {
+    SavedState s{};
+    std::memcpy(s.regs, r_, sizeof r_);
+    s.n_flag = n_flag_;
+    s.z_flag = z_flag_;
+    s.c_flag = c_flag_;
+    s.v_flag = v_flag_;
+    s.irq_enable = irq_enable_;
+    s.fiq_enable = fiq_enable_;
+    s.enabled = enabled_;
+    s.mode = mode_;
+    s.ticks = ticks_;
+    s.aica_interr = aica_interr_;
+    s.e68k_out = e68k_out_;
+    s.aica_reg_l = aica_reg_l_;
+    s.e68k_reg_l = e68k_reg_l_;
+    s.e68k_reg_m = e68k_reg_m_;
+    return s;
+}
+
+void Arm7::restore_state(const SavedState& s) noexcept {
+    std::memcpy(r_, s.regs, sizeof r_);
+    n_flag_ = s.n_flag;
+    z_flag_ = s.z_flag;
+    c_flag_ = s.c_flag;
+    v_flag_ = s.v_flag;
+    irq_enable_ = s.irq_enable;
+    fiq_enable_ = s.fiq_enable;
+    enabled_ = s.enabled;
+    mode_ = s.mode;
+    ticks_ = s.ticks;
+    aica_interr_ = s.aica_interr;
+    e68k_out_ = s.e68k_out;
+    aica_reg_l_ = s.aica_reg_l;
+    e68k_reg_l_ = s.e68k_reg_l;
+    e68k_reg_m_ = s.e68k_reg_m;
+}
+
 void Arm7::interrupt_change(std::uint32_t pending_bits, std::uint32_t level) {
     aica_interr_ = pending_bits != 0;
     if (aica_interr_)

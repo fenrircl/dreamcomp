@@ -32,6 +32,27 @@ TEST_CASE("scheduler: events run in deadline order and may re-arm") {
     CHECK(s.next_deadline() == sched::kNever);
 }
 
+TEST_CASE("SPG: next scanline is armed before the vblank callback") {
+    System sys;
+    int spg_event = -1;
+    for (std::size_t i = 0; i < sys.sched.events(); ++i) {
+        if (sys.sched.name(static_cast<int>(i)) == "spg-line") {
+            spg_event = static_cast<int>(i);
+            break;
+        }
+    }
+    REQUIRE(spg_event >= 0);
+    bool saw_vblank = false;
+    bool next_line_armed = false;
+    sys.spg.on_vblank_out = [&] {
+        saw_vblank = true;
+        next_line_armed = sys.sched.armed(spg_event);
+    };
+    sys.sched.advance(20'000'000);
+    CHECK(saw_vblank);
+    CHECK(next_line_armed);
+}
+
 TEST_CASE("intc: selection honours priorities, IMASK and BL") {
     sh4::Intc intc;
     CHECK(!intc.select(0x700000F0u));

@@ -288,6 +288,58 @@ std::uint64_t Bios::gd_ticks() const noexcept {
     return len > 10240 ? 1'000'000 : std::max<std::uint64_t>(len * 2, 1000);
 }
 
+Bios::SavedState Bios::save_state() const noexcept {
+    SavedState s{};
+    s.status = gd_.status;
+    s.command = gd_.command;
+    for (int i = 0; i < 4; ++i) {
+        s.params[i] = gd_.params[i];
+        s.result[i] = gd_.result[i];
+        s.sector_mode[i] = gd_.sector_mode[i];
+    }
+    s.last_request = gd_.last_request;
+    s.next_request = gd_.next_request;
+    s.read_sector = gd_.read_sector;
+    s.read_remaining = gd_.read_remaining;
+    s.read_total = gd_.read_total;
+    s.read_dest = gd_.read_dest;
+    s.speed = gd_.speed;
+    s.standby = gd_.standby;
+    s.read_flags = gd_.read_flags;
+    s.read_retry = gd_.read_retry;
+    s.callback = gd_.callback;
+    s.callback_arg = gd_.callback_arg;
+    s.sectors_read = sectors_read;
+    return s;
+}
+
+void Bios::restore_state(const SavedState& s) noexcept {
+    gd_.status = s.status;
+    gd_.command = s.command;
+    for (int i = 0; i < 4; ++i) {
+        gd_.params[i] = s.params[i];
+        gd_.result[i] = s.result[i];
+        gd_.sector_mode[i] = s.sector_mode[i];
+    }
+    gd_.last_request = s.last_request;
+    gd_.next_request = s.next_request;
+    gd_.read_sector = s.read_sector;
+    gd_.read_remaining = s.read_remaining;
+    gd_.read_total = s.read_total;
+    gd_.read_dest = s.read_dest;
+    gd_.speed = s.speed;
+    gd_.standby = s.standby;
+    gd_.read_flags = s.read_flags;
+    gd_.read_retry = s.read_retry;
+    gd_.callback = s.callback;
+    gd_.callback_arg = s.callback_arg;
+    sectors_read = s.sectors_read;
+    // The scheduler deadlines are restored separately; if a read was in flight, make sure its
+    // completion event is armed even if the old deadline was already consumed.
+    if (gd_.status == GDC_BUSY && gd_.read_remaining > 0)
+        sys_.sched.request(gd_event_, gd_ticks());
+}
+
 void Bios::gd_start_read() {
     gd_.read_sector = (gd_.params[0] & 0xFFFFFFu) - gdrom::kFadOffset;
     gd_.read_remaining = gd_.read_total = gd_.params[1];

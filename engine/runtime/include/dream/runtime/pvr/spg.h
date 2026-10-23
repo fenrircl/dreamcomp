@@ -37,6 +37,17 @@ public:
     // hardware-triggered transfer here.
     std::function<void()> on_vblank_out;
 
+    // Debug save-state support: timer registers plus the scanline/counter position.
+    struct SavedState {
+        std::uint32_t spg_hblank_int, spg_vblank_int, spg_control, spg_hblank, spg_load,
+            spg_vblank, spg_width;
+        std::uint64_t line_cycles, frames;
+        std::uint32_t scanline;
+        bool vsync, fieldnum, vclk_full;
+    };
+    SavedState save_state() const noexcept;
+    void restore_state(const SavedState& state) noexcept;
+
     std::uint32_t spg_hblank_int = 0x031D0000, spg_vblank_int = 0x00150104, spg_control = 0,
                   spg_hblank = 0x007E0345, spg_load = 0x01060359, spg_vblank = 0x00150104,
                   spg_width = 0x07F1933F;

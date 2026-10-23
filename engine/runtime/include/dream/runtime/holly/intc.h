@@ -74,6 +74,19 @@ public:
     std::uint32_t iml4nrm = 0, iml4ext = 0, iml4err = 0;
     std::uint32_t iml6nrm = 0, iml6ext = 0, iml6err = 0;
 
+    // Debug save-state support: status, per-level masks, then recompute the SH-4 lines.
+    struct SavedState {
+        std::uint32_t istnrm, istext, isterr;
+        std::uint32_t iml2nrm, iml2ext, iml2err;
+        std::uint32_t iml4nrm, iml4ext, iml4err;
+        std::uint32_t iml6nrm, iml6ext, iml6err;
+    };
+    SavedState save_state() const noexcept {
+        return {istnrm, istext,   isterr,   iml2nrm, iml2ext, iml2err,
+                iml4nrm, iml4ext, iml4err, iml6nrm, iml6ext, iml6err};
+    }
+    void restore_state(const SavedState& s);
+
 private:
     void recompute();
     sh4::Intc& cpu_;

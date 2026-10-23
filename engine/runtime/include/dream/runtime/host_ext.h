@@ -109,6 +109,13 @@ struct HostControls {
     // then calls reload_bindings so the game uses them at once.
     std::function<std::string()> bindings_path;
     std::function<void()> reload_bindings;
+    // Debug checkpoint (dreamcomp): the in-game settings panel can write/read the current checkpoint
+    // slot without taking the debug hotkeys. The launcher routes these through its own request queue;
+    // an overlay must not call the state loader itself (it unwinds the guest thread).
+    std::function<void()> save_state;
+    std::function<void()> load_state;
+    std::function<void()> next_state_slot;
+    std::function<std::string()> state_slot;
 };
 
 inline HostControls& host_controls() {

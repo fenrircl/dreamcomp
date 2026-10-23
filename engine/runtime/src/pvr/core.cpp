@@ -56,6 +56,31 @@ void Ta::reset() noexcept {
     stream.clear();
 }
 
+Ta::SavedState Ta::save_state() const {
+    SavedState state;
+    state.lists = lists;
+    state.chunks = chunks;
+    state.invalid = invalid;
+    state.current_list = current_list;
+    state.parser_state = static_cast<unsigned>(state_);
+    state.pending_v64 = pending_v64_;
+    state.stream = stream;
+    return state;
+}
+
+bool Ta::restore_state(const SavedState& state) {
+    if (state.current_list > 7 || state.parser_state > static_cast<unsigned>(kMlv64H))
+        return false;
+    lists = state.lists;
+    chunks = state.chunks;
+    invalid = state.invalid;
+    current_list = state.current_list;
+    state_ = static_cast<State>(state.parser_state);
+    pending_v64_ = state.pending_v64;
+    stream = state.stream;
+    return true;
+}
+
 void Ta::feed(const std::uint32_t words[8]) {
     ++chunks;
     stream.insert(stream.end(), words, words + 8);
@@ -191,6 +216,85 @@ void Core::reset() {
     ta.reset();
     fifo_fill_ = 0;
     seen_ta_data_ = false;
+}
+
+std::vector<std::uint8_t> Core::save_state() const {
+    struct FixedState {
+        std::uint8_t yuv_mb[384];
+        std::uint32_t yuv_fill, yuv_index;
+        std::uint32_t fifo_buf[8];
+        unsigned fifo_fill;
+        bool seen_ta_data;
+    } fixed{};
+    std::memcpy(fixed.yuv_mb, yuv_mb_.data(), yuv_mb_.size());
+    fixed.yuv_fill = yuv_fill_;
+    fixed.yuv_index = yuv_index_;
+    std::memcpy(fixed.fifo_buf, fifo_buf_, sizeof fifo_buf_);
+    fixed.fifo_fill = fifo_fill_;
+    fixed.seen_ta_data = seen_ta_data_;
+
+    const Ta::SavedState ta_state = ta.save_state();
+    const std::uint32_t stream_words = static_cast<std::uint32_t>(ta_state.stream.size());
+    std::vector<std::uint8_t> bytes;
+    const auto append = [&bytes](const void* data, std::size_t size) {
+        const auto* p = static_cast<const std::uint8_t*>(data);
+        bytes.insert(bytes.end(), p, p + size);
+    };
+    append(&fixed, sizeof fixed);
+    append(ta_state.lists.data(), sizeof ta_state.lists);
+    append(&ta_state.chunks, sizeof ta_state.chunks);
+    append(&ta_state.invalid, sizeof ta_state.invalid);
+    append(&ta_state.current_list, sizeof ta_state.current_list);
+    append(&ta_state.parser_state, sizeof ta_state.parser_state);
+    append(&ta_state.pending_v64, sizeof ta_state.pending_v64);
+    append(&stream_words, sizeof stream_words);
+    if (!ta_state.stream.empty())
+        append(ta_state.stream.data(), ta_state.stream.size() * sizeof(std::uint32_t));
+    return bytes;
+}
+
+bool Core::restore_state(const std::vector<std::uint8_t>& bytes) {
+    struct FixedState {
+        std::uint8_t yuv_mb[384];
+        std::uint32_t yuv_fill, yuv_index;
+        std::uint32_t fifo_buf[8];
+        unsigned fifo_fill;
+        bool seen_ta_data;
+    } fixed{};
+    std::size_t at = 0;
+    const auto read = [&bytes, &at](void* data, std::size_t size) {
+        if (size > bytes.size() - std::min(at, bytes.size()))
+            return false;
+        std::memcpy(data, bytes.data() + at, size);
+        at += size;
+        return true;
+    };
+    Ta::SavedState ta_state;
+    std::uint32_t stream_words = 0;
+    if (!read(&fixed, sizeof fixed) || !read(ta_state.lists.data(), sizeof ta_state.lists) ||
+        !read(&ta_state.chunks, sizeof ta_state.chunks) ||
+        !read(&ta_state.invalid, sizeof ta_state.invalid) ||
+        !read(&ta_state.current_list, sizeof ta_state.current_list) ||
+        !read(&ta_state.parser_state, sizeof ta_state.parser_state) ||
+        !read(&ta_state.pending_v64, sizeof ta_state.pending_v64) ||
+        !read(&stream_words, sizeof stream_words) ||
+        stream_words > (bytes.size() - at) / sizeof(std::uint32_t) ||
+        bytes.size() - at != static_cast<std::size_t>(stream_words) * sizeof(std::uint32_t) ||
+        fixed.yuv_fill > sizeof fixed.yuv_mb || fixed.fifo_fill > 8)
+        return false;
+    ta_state.stream.resize(stream_words);
+    if (stream_words != 0 && !read(ta_state.stream.data(),
+                                   static_cast<std::size_t>(stream_words) * sizeof(std::uint32_t)))
+        return false;
+    if (!ta.restore_state(ta_state))
+        return false;
+    std::memcpy(yuv_mb_.data(), fixed.yuv_mb, yuv_mb_.size());
+    yuv_fill_ = fixed.yuv_fill;
+    yuv_index_ = fixed.yuv_index;
+    std::memcpy(fifo_buf_, fixed.fifo_buf, sizeof fifo_buf_);
+    fifo_fill_ = fixed.fifo_fill;
+    seen_ta_data_ = fixed.seen_ta_data;
+    return true;
 }
 
 void Core::start_render() {

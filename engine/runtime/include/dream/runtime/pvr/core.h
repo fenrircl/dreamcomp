@@ -39,8 +39,18 @@ struct ListStats {
 // Parameter parser: 32-byte chunks in, list statistics and end-of-list events out.
 class Ta {
 public:
+    struct SavedState {
+        std::array<ListStats, 5> lists{};
+        std::uint64_t chunks = 0, invalid = 0;
+        unsigned current_list = 7, parser_state = 0;
+        bool pending_v64 = false;
+        std::vector<std::uint32_t> stream;
+    };
+
     void reset() noexcept;
     void feed(const std::uint32_t words[8]);
+    SavedState save_state() const;
+    bool restore_state(const SavedState& state);
     std::function<void(unsigned list)> on_list_end;
 
     std::array<ListStats, 5> lists{};
@@ -79,6 +89,8 @@ public:
 
     Core(sched::Scheduler& sched, holly::Intc& holly, Spg& spg, mem::DcMemory& memory);
     void reset();
+    std::vector<std::uint8_t> save_state() const;
+    bool restore_state(const std::vector<std::uint8_t>& state);
 
     std::uint32_t read(std::uint32_t addr, unsigned size) override;
     void write(std::uint32_t addr, std::uint32_t value, unsigned size) override;

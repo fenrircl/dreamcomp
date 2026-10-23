@@ -120,3 +120,23 @@ TEST_CASE("mixer: identical inputs give identical output") {
         REQUIRE(a.aica.last_left == b.aica.last_left);
     }
 }
+
+TEST_CASE("AICA checkpoint restores active music voices and the next sample") {
+    Rig saved, restored;
+    for (Rig* r : {&saved, &restored}) {
+        r->square_wave(0x1000, 64, 8000);
+        r->program_channel(0x1000, 64);
+        r->key_on();
+    }
+    for (int i = 0; i < 137; ++i)
+        saved.aica.sample_tick();
+
+    const auto state = saved.aica.save_state();
+    REQUIRE(restored.aica.restore_state(state));
+    CHECK(restored.aica.mixer.active_channels() == 1);
+
+    saved.aica.sample_tick();
+    restored.aica.sample_tick();
+    CHECK(restored.aica.last_left == saved.aica.last_left);
+    CHECK(restored.aica.last_right == saved.aica.last_right);
+}

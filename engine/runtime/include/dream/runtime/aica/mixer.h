@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace dream::aica {
 
@@ -39,6 +40,11 @@ public:
     void common_reg_read(unsigned offset, bool byte);
     // Produces one stereo sample.
     void sample(std::int16_t& left, std::int16_t& right);
+
+    // Local debug checkpoint support. The serialized blob stores voice/envelope/ADPCM/LFO and
+    // DSP work state; pointers and function dispatch are rebuilt against this Mixer on restore.
+    std::vector<std::uint8_t> save_state() const;
+    bool restore_state(const std::vector<std::uint8_t>& bytes);
 
     // Diagnostics
     std::uint64_t key_ons = 0, key_offs = 0, samples = 0, nonzero_samples = 0;

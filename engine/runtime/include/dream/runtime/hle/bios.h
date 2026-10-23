@@ -68,6 +68,25 @@ public:
 
     Flash& flash() noexcept { return flash_; }
 
+    // Debug save-state support: the GD-ROM HLE drive state (command, callback, pending DMA read).
+    // Sectors already written to guest memory live in the RAM section, so restoring this resumes a
+    // streaming read where it stopped instead of leaving the title polling a drive that never
+    // completes.
+    struct SavedState {
+        std::int32_t status;
+        std::uint32_t command;
+        std::uint32_t params[4];
+        std::uint32_t result[4];
+        std::uint32_t last_request, next_request;
+        std::uint32_t read_sector, read_remaining, read_total, read_dest;
+        std::uint32_t speed, standby, read_flags, read_retry;
+        std::uint32_t callback, callback_arg;
+        std::uint32_t sector_mode[4];
+        std::uint64_t sectors_read;
+    };
+    SavedState save_state() const noexcept;
+    void restore_state(const SavedState& state) noexcept;
+
 private:
     Language lang_ = Language::English;
     Region region_ = Region::Usa;

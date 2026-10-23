@@ -2,6 +2,8 @@
 // aica_if.cpp; GPL-2.0, ADR 1).
 #include "dream/runtime/aica/aica.h"
 
+#include <cstring>
+
 namespace dream::aica {
 
 Aica::Aica(sched::Scheduler& sched, holly::Intc& holly, mem::DcMemory& memory)
@@ -26,6 +28,67 @@ void Aica::reset() {
     arm.reset();
     arm.set_enabled(false);
     mixer.reset();
+}
+
+std::vector<std::uint8_t> Aica::save_state() const {
+    const std::vector<std::uint8_t> mixer_state = mixer.save_state();
+    const std::uint32_t mixer_size = static_cast<std::uint32_t>(mixer_state.size());
+    std::vector<std::uint8_t> out;
+    out.reserve(regs_.size() + sizeof(Arm7::SavedState) + 6 * sizeof(int) +
+                sizeof(std::uint64_t) + sizeof(mixer_size) + mixer_state.size());
+    const auto put = [&out](const void* data, std::size_t bytes) {
+        const auto* p = static_cast<const std::uint8_t*>(data);
+        out.insert(out.end(), p, p + bytes);
+    };
+    put(regs_.data(), regs_.size());
+    const Arm7::SavedState arm_state = arm.save_state();
+    put(&arm_state, sizeof arm_state);
+    put(timer_step_.data(), timer_step_.size() * sizeof(int));
+    put(timer_left_.data(), timer_left_.size() * sizeof(int));
+    put(&samples, sizeof samples);
+    put(&mixer_size, sizeof mixer_size);
+    put(mixer_state.data(), mixer_state.size());
+    return out;
+}
+
+bool Aica::restore_state(const std::vector<std::uint8_t>& bytes) {
+    const std::size_t legacy_size = regs_.size() + sizeof(Arm7::SavedState) +
+                                    6 * sizeof(int) + sizeof(std::uint64_t);
+    if (bytes.size() < legacy_size)
+        return false;
+    std::size_t at = 0;
+    const auto take = [&bytes, &at](void* data, std::size_t size) {
+        std::memcpy(data, bytes.data() + at, size);
+        at += size;
+    };
+    take(regs_.data(), regs_.size());
+    Arm7::SavedState arm_state{};
+    take(&arm_state, sizeof arm_state);
+    arm.restore_state(arm_state);
+    take(timer_step_.data(), timer_step_.size() * sizeof(int));
+    take(timer_left_.data(), timer_left_.size() * sizeof(int));
+    take(&samples, sizeof samples);
+    if (bytes.size() == legacy_size) {
+        // v5 checkpoints did not include voice/DSP playback cursors. Retain compatibility, though
+        // an F5 overwrite is needed to get seamless music restoration in the new format.
+        mixer.reset();
+        mixer.ring_buffer_written();
+        mixer.dsp_program_written();
+    } else {
+        if (bytes.size() < at + sizeof(std::uint32_t))
+            return false;
+        std::uint32_t mixer_size = 0;
+        take(&mixer_size, sizeof mixer_size);
+        if (mixer_size != bytes.size() - at)
+            return false;
+        std::vector<std::uint8_t> mixer_state(mixer_size);
+        take(mixer_state.data(), mixer_state.size());
+        if (!mixer.restore_state(mixer_state))
+            return false;
+    }
+    update_arm_interrupts();
+    update_sh4_interrupts();
+    return true;
 }
 
 void Aica::set16(std::uint32_t offset, std::uint32_t value) noexcept {

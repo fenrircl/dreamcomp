@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 #include "dream/runtime/aica/arm7.h"
 #include "dream/runtime/aica/mixer.h"
@@ -57,6 +58,12 @@ public:
         return regs_[offset] | (static_cast<std::uint32_t>(regs_[offset + 1]) << 8);
     }
     bool arm_in_reset() const noexcept { return (regs_[kArmRst] & 1u) != 0; }
+
+    // Debug save-state support: the SH-4-visible register image, the timers and the ARM7 core.
+    // The mixer is regenerated from the register image and sound RAM on restore; its envelope and
+    // DSP work registers are not part of the checkpoint.
+    std::vector<std::uint8_t> save_state() const;
+    bool restore_state(const std::vector<std::uint8_t>& bytes);
 
 private:
     std::array<std::uint8_t, 0x8000> regs_{};  // before arm/mixer: they are built on it

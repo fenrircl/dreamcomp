@@ -100,6 +100,19 @@ public:
     std::uint64_t instructions = 0, fiqs = 0, swis = 0, undefined_ops = 0;
     std::uint64_t fiqs_by_level[8] = {};
 
+    // Debug save-state support: the register banks, the mode/flags and the e68k latch are all the
+    // core keeps between instructions. Counters are diagnostics and are not restored.
+    struct SavedState {
+        RegPair regs[RN_ARM_REG_COUNT];
+        bool n_flag, z_flag, c_flag, v_flag;
+        bool irq_enable, fiq_enable, enabled;
+        int mode, ticks;
+        bool aica_interr, e68k_out;
+        std::uint32_t aica_reg_l, e68k_reg_l, e68k_reg_m;
+    };
+    SavedState save_state() const noexcept;
+    void restore_state(const SavedState& state) noexcept;
+
 private:
     template <typename T>
     T read(std::uint32_t addr);

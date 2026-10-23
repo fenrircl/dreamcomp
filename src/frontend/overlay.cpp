@@ -350,6 +350,28 @@ struct Overlay::Impl {
                     dream::host::host_controls().reload_bindings();
             });
         };
+        host.save_state = [this] {
+            post([] {
+                if (dream::host::host_controls().save_state)
+                    dream::host::host_controls().save_state();
+            });
+        };
+        host.load_state = [this] {
+            post([] {
+                if (dream::host::host_controls().load_state)
+                    dream::host::host_controls().load_state();
+            });
+        };
+        host.next_state_slot = [this] {
+            // Slot selection only changes an atomic host-side index, so it is safe to update
+            // immediately; this also lets the HUD rebuild with the newly selected slot.
+            if (dream::host::host_controls().next_state_slot)
+                dream::host::host_controls().next_state_slot();
+        };
+        host.state_slot = [] {
+            const auto& hc = dream::host::host_controls();
+            return hc.state_slot ? hc.state_slot() : std::string();
+        };
         ui = std::make_unique<MenuUi>(cfg, Mode::InGame, host);
         if (!context || !ui->load(context, &err)) {
             std::fprintf(stderr, "overlay: %s\n", err.c_str());

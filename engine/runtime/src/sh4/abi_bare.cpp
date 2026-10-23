@@ -261,7 +261,7 @@ void resume_at(Ctx& c, ::dream::Memory& m, std::uint32_t pc) {
 
 namespace {
 template <typename Start>
-void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start) {
+void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start, bool stop_on_pr) {
     const std::uint32_t stop_pr = c.pr;
     std::uint32_t pc = 0;
     bool resumed = false;
@@ -274,7 +274,12 @@ void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start) {
             // After a non-local return the host stack no longer mirrors the guest's: every return
             // comes back here and continues at PR.
             resume_at(c, m, pc);
-            if (c.pr == stop_pr)
+            // A normal run starts at a known entry PR, so returning there means the entry function
+            // finished. A checkpoint resume starts in the middle of an arbitrary call: its PR is
+            // just the caller saved in the context, not a stop condition. Treating it as one made
+            // F9 look like a clean shutdown ("returned from the entry function") as soon as the
+            // resumed function returned to its caller.
+            if (stop_on_pr && c.pr == stop_pr)
                 return;
             if (trace_nonlocal())
                 std::fprintf(
@@ -283,7 +288,7 @@ void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start) {
                     c.pr);
             pc = c.pr;
         } catch (const NonLocalReturn& n) {
-            if (n.pc == stop_pr)
+            if (stop_on_pr && n.pc == stop_pr)
                 return;
             pc = n.pc;
             resumed = true;
@@ -293,15 +298,38 @@ void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start) {
 }  // namespace
 
 void run_guest(Ctx& c, ::dream::Memory& m, std::uint32_t entry) {
-    run_guest_impl(c, m, [&] { call_indirect(c, m, entry); });
+    run_guest_impl(c, m, [&] { call_indirect(c, m, entry); }, true);
 }
 
 void run_guest(Ctx& c, ::dream::Memory& m, GuestFn entry) {
-    run_guest_impl(c, m, [&] { entry(c, m); });
+    run_guest_impl(c, m, [&] { entry(c, m); }, true);
 }
 
 void run_guest_resume(Ctx& c, ::dream::Memory& m, std::uint32_t pc) {
-    run_guest_impl(c, m, [&] { resume_at(c, m, pc); });
+    // A checkpoint did not start at a function entry: there is no host frame or known entry PR to
+    // return to. Keep re-entering at the guest's PR after every return instead of treating the
+    // saved PR as the end of the run (which used to shut the game down on the first F9).
+    unsigned long long iterations = 0;
+    for (;;) {
+        try {
+            resume_at(c, m, pc);
+            if (iterations < 32)
+                std::fprintf(stderr, "run_guest_resume[%llu]: returned pc 0x%08x pr 0x%08x\n",
+                             iterations, c.pc, c.pr);
+            if (trace_nonlocal())
+                std::fprintf(
+                    stderr,
+                    "run_guest_resume: resumed code returned (pc 0x%08x), continuing at pr 0x%08x\n",
+                    c.pc, c.pr);
+            pc = c.pr;
+        } catch (const NonLocalReturn& n) {
+            pc = n.pc;
+        }
+        ++iterations;
+        if (iterations % 1000000ull == 0)
+            std::fprintf(stderr, "run_guest_resume: %llu iterations, pc 0x%08x pr 0x%08x\n",
+                         iterations, c.pc, c.pr);
+    }
 }
 
 void call_indirect(Ctx& c, ::dream::Memory& m, std::uint32_t target) {

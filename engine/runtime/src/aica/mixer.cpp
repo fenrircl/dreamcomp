@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 
 namespace dream::aica {
 
@@ -304,12 +305,13 @@ struct Mixer::Channel {
     template <PcmsType PCMS>
     SampleType read_sample(u32 addr) const noexcept {
         const u8* ram = mixer->aram_;
-        if (PCMS == kPcm16) {
+        if constexpr (PCMS == kPcm16) {
             s16 v;
             std::memcpy(&v, ram + (addr & kAramMask & ~1u), 2);
             return v;
+        } else {
+            return static_cast<s8>(ram[addr & kAramMask]) << 8;
         }
-        return static_cast<s8>(ram[addr & kAramMask]) << 8;
     }
     u8 read_nibble_byte(u32 addr) const noexcept { return mixer->aram_[addr & kAramMask]; }
 
@@ -843,6 +845,113 @@ struct Mixer::Channel {
         }
     }
 };
+
+namespace {
+struct SavedChannel {
+    u32 SA, CA;
+    Mixer::Fp22_10 step;
+    u32 update_rate;
+    SampleType s0, s1;
+    u32 LSA, LEA;
+    u8 looped;
+    s32 last_quant, loopstart_quant;
+    SampleType loopstart_prev_sample;
+    bool in_loop;
+    u32 noise_state;
+    u32 DLAtt, DRAtt, DSPAtt;
+    s32 aeg_val;
+    Mixer::EgState aeg_state;
+    u32 aeg_attack, aeg_decay1, aeg_decay2_value, aeg_decay2, aeg_release;
+    u32 feg_value;
+    Mixer::EgState feg_state;
+    SampleType feg_prev1, feg_prev2;
+    s32 feg_fract_save, feg_q;
+    u32 feg_attack, feg_decay1, feg_decay2, feg_release;
+    bool feg_active;
+    u32 lfo_counter, lfo_start;
+    u8 lfo_state, lfo_alfo, lfo_alfo_shift;
+    Mixer::Fp22_10 plfo_step;
+    Mixer::LfoType alfo_type, plfo_type;
+    bool enabled;
+};
+
+struct SavedMixer {
+    Mixer::DspState dsp;
+    SavedChannel channels[64];
+    std::uint64_t key_ons, key_offs, samples, nonzero_samples, dsp_state_writes;
+};
+static_assert(std::is_trivially_copyable_v<SavedMixer>);
+}  // namespace
+
+std::vector<std::uint8_t> Mixer::save_state() const {
+    SavedMixer state{};
+    state.dsp = dsp_;
+    state.key_ons = key_ons;
+    state.key_offs = key_offs;
+    state.samples = samples;
+    state.nonzero_samples = nonzero_samples;
+    state.dsp_state_writes = dsp_state_writes;
+    for (unsigned i = 0; i < 64; ++i) {
+        const Channel& ch = chans_[i];
+        SavedChannel& s = state.channels[i];
+        s.SA = ch.SA; s.CA = ch.CA; s.step = ch.step; s.update_rate = ch.update_rate;
+        s.s0 = ch.s0; s.s1 = ch.s1; s.LSA = ch.loop.LSA; s.LEA = ch.loop.LEA;
+        s.looped = ch.loop.looped; s.last_quant = ch.adpcm.last_quant;
+        s.loopstart_quant = ch.adpcm.loopstart_quant;
+        s.loopstart_prev_sample = ch.adpcm.loopstart_prev_sample; s.in_loop = ch.adpcm.in_loop;
+        s.noise_state = ch.noise_state; s.DLAtt = ch.VolMix.DLAtt; s.DRAtt = ch.VolMix.DRAtt;
+        s.DSPAtt = ch.VolMix.DSPAtt; s.aeg_val = ch.AEG.val; s.aeg_state = ch.AEG.state;
+        s.aeg_attack = ch.AEG.AttackRate; s.aeg_decay1 = ch.AEG.Decay1Rate;
+        s.aeg_decay2_value = ch.AEG.Decay2Value; s.aeg_decay2 = ch.AEG.Decay2Rate;
+        s.aeg_release = ch.AEG.ReleaseRate; s.feg_value = ch.FEG.value;
+        s.feg_state = ch.FEG.state; s.feg_prev1 = ch.FEG.prev1; s.feg_prev2 = ch.FEG.prev2;
+        s.feg_fract_save = ch.FEG.fractSave; s.feg_q = ch.FEG.q;
+        s.feg_attack = ch.FEG.AttackRate; s.feg_decay1 = ch.FEG.Decay1Rate;
+        s.feg_decay2 = ch.FEG.Decay2Rate; s.feg_release = ch.FEG.ReleaseRate;
+        s.feg_active = ch.FEG.active; s.lfo_counter = ch.lfo.counter;
+        s.lfo_start = ch.lfo.start_value; s.lfo_state = ch.lfo.state; s.lfo_alfo = ch.lfo.alfo;
+        s.lfo_alfo_shift = ch.lfo.alfo_shft; s.plfo_step = ch.lfo.plfo_step;
+        s.alfo_type = ch.lfo.alfoType; s.plfo_type = ch.lfo.plfoType; s.enabled = ch.enabled;
+    }
+    std::vector<std::uint8_t> bytes(sizeof state);
+    std::memcpy(bytes.data(), &state, sizeof state);
+    return bytes;
+}
+
+bool Mixer::restore_state(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != sizeof(SavedMixer))
+        return false;
+    SavedMixer state{};
+    std::memcpy(&state, bytes.data(), sizeof state);
+    dsp_ = state.dsp;
+    key_ons = state.key_ons; key_offs = state.key_offs; samples = state.samples;
+    nonzero_samples = state.nonzero_samples; dsp_state_writes = state.dsp_state_writes;
+    for (unsigned i = 0; i < 64; ++i) {
+        Channel& ch = chans_[i];
+        const SavedChannel& s = state.channels[i];
+        ch.SA = s.SA; ch.CA = s.CA; ch.step = s.step; ch.update_rate = s.update_rate;
+        ch.s0 = s.s0; ch.s1 = s.s1; ch.loop.LSA = s.LSA; ch.loop.LEA = s.LEA;
+        ch.loop.looped = s.looped; ch.adpcm.last_quant = s.last_quant;
+        ch.adpcm.loopstart_quant = s.loopstart_quant;
+        ch.adpcm.loopstart_prev_sample = s.loopstart_prev_sample; ch.adpcm.in_loop = s.in_loop;
+        ch.noise_state = s.noise_state; ch.VolMix.DLAtt = s.DLAtt; ch.VolMix.DRAtt = s.DRAtt;
+        ch.VolMix.DSPAtt = s.DSPAtt; ch.VolMix.DSPOut = &dsp_.MIXS[ch.ccd->ISEL];
+        ch.AEG.val = s.aeg_val; ch.AEG.state = s.aeg_state; ch.AEG.AttackRate = s.aeg_attack;
+        ch.AEG.Decay1Rate = s.aeg_decay1; ch.AEG.Decay2Value = s.aeg_decay2_value;
+        ch.AEG.Decay2Rate = s.aeg_decay2; ch.AEG.ReleaseRate = s.aeg_release;
+        ch.FEG.value = s.feg_value; ch.FEG.state = s.feg_state; ch.FEG.prev1 = s.feg_prev1;
+        ch.FEG.prev2 = s.feg_prev2; ch.FEG.fractSave = s.feg_fract_save; ch.FEG.q = s.feg_q;
+        ch.FEG.AttackRate = s.feg_attack; ch.FEG.Decay1Rate = s.feg_decay1;
+        ch.FEG.Decay2Rate = s.feg_decay2; ch.FEG.ReleaseRate = s.feg_release;
+        ch.FEG.active = s.feg_active; ch.lfo.counter = s.lfo_counter;
+        ch.lfo.start_value = s.lfo_start; ch.lfo.state = s.lfo_state; ch.lfo.alfo = s.lfo_alfo;
+        ch.lfo.alfo_shft = s.lfo_alfo_shift; ch.lfo.plfo_step = s.plfo_step;
+        ch.lfo.alfoType = s.alfo_type; ch.lfo.plfoType = s.plfo_type;
+        ch.lfo.plfo_scale = kPlfoScales[ch.ccd->PLFOS]; ch.enabled = s.enabled;
+        ch.update_stream_step();
+    }
+    return true;
+}
 
 // ---- Mixer -------------------------------------------------------------------------------------
 

@@ -119,6 +119,25 @@ TEST_CASE("pvr: 64-byte headers and vertices, sprites and modifier volumes are s
     CHECK(r.core.ta.lists[pvr::kOpaque].polygons == 0);
 }
 
+TEST_CASE("pvr: checkpoint restores a list parser and geometry stream from the title") {
+    Rig source;
+    source.list_init();
+    source.chunk(Rig::pcw(pvr::kPolygonOrModVol, pvr::kOpaque, 0x02));
+    source.chunk(Rig::pcw(pvr::kVertex, 0, 0, true));
+    const auto checkpoint = source.core.save_state();
+
+    Rig resumed;
+    CHECK(resumed.core.restore_state(checkpoint));
+    resumed.chunk(Rig::pcw(pvr::kVertex, 0, 0, true));
+    resumed.chunk(Rig::pcw(pvr::kVertex, 0, 0, true));
+    resumed.chunk(Rig::pcw(pvr::kEndOfList, pvr::kOpaque));
+    CHECK(resumed.core.ta.lists[pvr::kOpaque].polygons == 1);
+    CHECK(resumed.core.ta.lists[pvr::kOpaque].vertices == 3);
+    CHECK(resumed.core.ta.lists[pvr::kOpaque].ends == 1);
+    CHECK(resumed.core.ta.stream.size() == 5 * 8);
+    CHECK(resumed.core.ta.invalid == 0);
+}
+
 TEST_CASE("pvr: STARTRENDER completes on the clock; texture and frame-buffer paths are tracked") {
     Rig r;
     auto& m = r.sys.memory;

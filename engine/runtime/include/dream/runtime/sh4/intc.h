@@ -56,6 +56,20 @@ public:
     void write(std::uint32_t addr, std::uint32_t value, unsigned size) override;
     std::uint16_t ipra = 0, iprb = 0, iprc = 0, icr = 0;
 
+    // Debug save-state support: priority/mask registers and the pending source latch.
+    struct SavedState {
+        std::uint16_t ipra, iprb, iprc, icr;
+        std::uint32_t pending;
+    };
+    SavedState save_state() const noexcept { return {ipra, iprb, iprc, icr, pending_}; }
+    void restore_state(const SavedState& s) noexcept {
+        ipra = s.ipra;
+        iprb = s.iprb;
+        iprc = s.iprc;
+        icr = s.icr;
+        pending_ = s.pending;
+    }
+
 private:
     std::uint32_t pending_ = 0;
 };

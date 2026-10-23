@@ -8,6 +8,22 @@ void Intc::reset() {
     recompute();
 }
 
+void Intc::restore_state(const SavedState& s) {
+    istnrm = s.istnrm;
+    istext = s.istext;
+    isterr = s.isterr;
+    iml2nrm = s.iml2nrm;
+    iml2ext = s.iml2ext;
+    iml2err = s.iml2err;
+    iml4nrm = s.iml4nrm;
+    iml4ext = s.iml4ext;
+    iml4err = s.iml4err;
+    iml6nrm = s.iml6nrm;
+    iml6ext = s.iml6ext;
+    iml6err = s.iml6err;
+    recompute();
+}
+
 void Intc::raise(Irq irq) {
     const unsigned n = static_cast<unsigned>(irq);
     if (n < 32)

@@ -21,6 +21,40 @@ void Spg::reset() {
     recalc();
 }
 
+Spg::SavedState Spg::save_state() const noexcept {
+    SavedState s{};
+    s.spg_hblank_int = spg_hblank_int;
+    s.spg_vblank_int = spg_vblank_int;
+    s.spg_control = spg_control;
+    s.spg_hblank = spg_hblank;
+    s.spg_load = spg_load;
+    s.spg_vblank = spg_vblank;
+    s.spg_width = spg_width;
+    s.line_cycles = line_cycles_;
+    s.frames = frames_;
+    s.scanline = scanline_;
+    s.vsync = vsync_;
+    s.fieldnum = fieldnum_;
+    s.vclk_full = vclk_full_;
+    return s;
+}
+
+void Spg::restore_state(const SavedState& s) noexcept {
+    spg_hblank_int = s.spg_hblank_int;
+    spg_vblank_int = s.spg_vblank_int;
+    spg_control = s.spg_control;
+    spg_hblank = s.spg_hblank;
+    spg_load = s.spg_load;
+    spg_vblank = s.spg_vblank;
+    spg_width = s.spg_width;
+    vclk_full_ = s.vclk_full;
+    line_cycles_ = s.line_cycles;
+    frames_ = s.frames;
+    scanline_ = s.scanline;
+    vsync_ = s.vsync;
+    fieldnum_ = s.fieldnum;
+}
+
 void Spg::set_vclk_div(bool full) {
     vclk_full_ = full;
     recalc();
@@ -45,6 +79,10 @@ void Spg::on_line() {
     const std::uint32_t vbend = (spg_vblank >> 16) & 0x3FFu;
     if (scanline_ == vblank_in)
         holly_.raise(holly::Irq::VBlankIn);
+    // Arm the next scanline before calling host code. The vblank callback can save a
+    // checkpoint or unwind the guest to load one; in either case its scheduler snapshot
+    // must include the next SPG event or the restored game will never advance another frame.
+    sched_.request(event_, line_cycles_);
     if (scanline_ == vblank_out) {
         holly_.raise(holly::Irq::VBlankOut);
         if (on_vblank_out)
@@ -69,7 +107,6 @@ void Spg::on_line() {
         fieldnum_ = (spg_control & 0x10u) ? !fieldnum_ : false;
         ++frames_;
     }
-    sched_.request(event_, line_cycles_);
 }
 
 std::uint32_t Spg::read(std::uint32_t addr, unsigned) {
