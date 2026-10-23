@@ -840,14 +840,10 @@ struct Live {
             rearm_escape = false;
             window.set_escape_quits(overlays.empty());  // an overlay owns escape (dreamcomp)
         }
-        // With an overlay active, Escape is the player's menu key. The overlay itself consumes it
-        // and shows the in-game settings panel; only when no overlay took the key does the engine
-        // open its controller screen (whose checkpoint rows remain available for debug builds).
-        if (!overlays.empty() && !menu.is_open() && !overlay_open() &&
-            window.pressed(Control::Back)) {
-            open_menu();
-            return;
-        }
+        // With an overlay active, Escape belongs to the overlay: it opens and closes the in-game
+        // settings panel. The engine's controller screen is not opened from Escape here, because
+        // the same key that closes the panel would otherwise open it immediately; it is reached
+        // from the panel's Controls tab instead.
         // dreamcomp: an overlay host has its own controls screen and gives F1 to the HUD editor.
         // The key is polled here, not taken from the event the overlay consumed, so it has to be
         // refused here as well.
