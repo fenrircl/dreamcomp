@@ -37,6 +37,11 @@ struct PortInfo {
     void (*widescreen)(dream::System& sys, float aspect) = nullptr;
     bool widescreen_anamorphic = true;
     float max_aspect = 32.0f / 9.0f;
+    // Renderer-side Hor+ (dreamcomp): squeeze scene primitives horizontally around the centre by
+    // (4/3)/aspect before the wide render target stretches them back. Use it for a title that does
+    // not expose a projection/camera hook but submits off-screen geometry to the PVR instead of
+    // culling it on the CPU. HUD primitives are excluded by PortInfo::hud and corrected separately.
+    bool widescreen_scene_squeeze = false;
 
     // Widescreen HUD correction (anamorphic ports). The game draws its 2D HUD in 640x480 screen
     // space, so the horizontal stretch that widens the 3D view also widens the HUD. Primitives

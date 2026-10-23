@@ -87,13 +87,28 @@ enum class Edit : std::uint8_t {
 
 struct Stats {
     std::uint64_t corrected = 0;
+    std::uint64_t squeezed = 0;
 };
 
 // One frame's pass: classifies with `rule`, applies `overrides`, moves the HUD vertices for a
 // picture of `aspect` (k = (4/3) / aspect) when `apply`, and fills `snapshot` when it is not null.
+// With `squeeze_scene`, primitives that are not classified as HUD are squeezed about the screen
+// centre by the same k; this is the renderer-side Hor+ path for a title that submits off-screen
+// geometry (PortInfo::widescreen_scene_squeeze).
 // Without `apply` (a 4:3 picture: nothing to correct) the frame is left exactly as it was, and the
 // snapshot shows where each element would be anchored.
 void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float aspect, bool edges,
-             bool apply, const Overrides& overrides, Snapshot* snapshot, Stats& stats);
+             bool apply, const Overrides& overrides, Snapshot* snapshot, Stats& stats,
+             bool squeeze_scene = false);
+
+// Renderer-side Hor+ for a 2D frame (menu, FMV, full-screen map): every primitive is squeezed about
+// the screen centre, so the wide render target's stretch cancels and the original 4:3 picture stays
+// centred with black side bars. HUD correction must not run on the same frame.
+void squeeze_2d(dream::render::Frame& frame, float aspect, Stats& stats);
+
+// A letterboxed 2D cutscene (the game already draws cinematic black bars inside its 640x480
+// frame): leave x alone and scale y by aspect/(4/3), so the content fills the wide target and the
+// bars are cropped instead of being squeezed into the central 4:3 area.
+void squeeze_cinema(dream::render::Frame& frame, float aspect, Stats& stats);
 
 }  // namespace dreamcomp::hud

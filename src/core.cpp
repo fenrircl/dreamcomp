@@ -544,11 +544,86 @@ public:
         const bool apply = widescreen() && hud_fix_;
         if (!apply && !watching)
             return;
+        // A frame with no substantial 3D geometry is a menu, FMV or a full-screen 2D screen: keep
+        // its original 4:3 shape centred instead of stretching it into the wide target. The 3D
+        // check is per frame because a title switches between gameplay and these screens freely.
+        bool scene_3d = false;
+        if (apply && g_port->widescreen_scene_squeeze) {
+            unsigned non_flat = 0;
+            for (const auto& list : frame.lists) {
+                for (const auto& p : list) {
+                    if (p.count < 3 || p.first + p.count > frame.vertices.size())
+                        continue;
+                    const float z0 = frame.vertices[p.first].z;
+                    for (std::uint32_t i = 1; i < p.count; ++i)
+                        if (frame.vertices[p.first + i].z != z0) {
+                            ++non_flat;
+                            break;
+                        }
+                }
+                if (non_flat >= 32)
+                    break;
+            }
+            scene_3d = non_flat >= 32;
+        }
+        if (apply && g_port->widescreen_scene_squeeze && !scene_3d) {
+            // A cutscene already letterboxed by the game (content shorter than the 4:3 frame) should
+            // fill the wide picture and lose its own bars, not sit as a 4:3 card inside it. Use the
+            // union of textured, non-black primitives as the content box; a menu's full-screen
+            // background keeps the box at 480 and takes the normal 4:3 path.
+            float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+            bool have_content = false;
+            for (const auto& list : frame.lists) {
+                for (const auto& p : list) {
+                    if (p.count < 3 || p.first + p.count > frame.vertices.size())
+                        continue;
+                    if ((p.pcw & 8u) == 0)
+                        continue;  // untextured black bars/backgrounds do not define the content
+                    bool black = true;
+                    for (std::uint32_t i = 0; i < p.count && black; ++i) {
+                        const auto& v = frame.vertices[p.first + i];
+                        if ((v.base & 0xFFFFFFu) != 0 || (v.offset & 0xFFFFFFu) != 0)
+                            black = false;
+                    }
+                    if (black)
+                        continue;
+                    for (std::uint32_t i = 0; i < p.count; ++i) {
+                        const auto& v = frame.vertices[p.first + i];
+                        x0 = std::min(x0, v.x);
+                        x1 = std::max(x1, v.x);
+                        y0 = std::min(y0, v.y);
+                        y1 = std::max(y1, v.y);
+                    }
+                    have_content = true;
+                }
+            }
+            const bool cinema = have_content && x1 - x0 >= 600.0f && y1 - y0 >= 180.0f &&
+                                y1 - y0 <= 440.0f;
+            if (cinema) {
+                static bool logged = false;
+                if (!logged) {
+                    logged = true;
+                    std::fprintf(stderr,
+                                 "dreamcomp: cinematic 2D content %.0fx%.0f, filling the wide "
+                                 "picture\n",
+                                 static_cast<double>(x1 - x0), static_cast<double>(y1 - y0));
+                }
+            }
+            hud::Stats stats;
+            if (cinema)
+                hud::squeeze_cinema(frame, target_aspect(), stats);
+            else
+                hud::squeeze_2d(frame, target_aspect(), stats);
+            hud_squeezed_ += stats.squeezed;
+            return;
+        }
         hud::Snapshot snap;
         hud::Stats stats;
         hud::correct(frame, g_port->hud, apply ? target_aspect() : 4.0f / 3.0f, hud_edges_, apply,
-                     hud_overrides_, watching ? &snap : nullptr, stats);
+                     hud_overrides_, watching ? &snap : nullptr, stats,
+                     g_port->widescreen_scene_squeeze);
         hud_corrected_ += stats.corrected;
+        hud_squeezed_ += stats.squeezed;
         if (!watching)
             return;
         snap.image_aspect = widescreen() ? target_aspect() : 4.0f / 3.0f;
@@ -797,6 +872,9 @@ public:
         if (hud_corrected_)
             std::printf("dreamcomp: widescreen HUD: %llu primitives corrected\n",
                         static_cast<unsigned long long>(hud_corrected_));
+        if (hud_squeezed_)
+            std::printf("dreamcomp: widescreen scene: %llu primitives squeezed\n",
+                        static_cast<unsigned long long>(hud_squeezed_));
         if (sharpened_)
             std::printf("dreamcomp: sharp 2D: %llu one-texel-per-pixel quads point sampled\n",
                         static_cast<unsigned long long>(sharpened_));
@@ -829,6 +907,7 @@ private:
     float settle_aspect_ = 0.0f;
     unsigned settle_ = 0;
     std::uint64_t hud_corrected_ = 0;
+    std::uint64_t hud_squeezed_ = 0;
     std::uint64_t sharpened_ = 0;
     bool sharp_2d_ = true;
     // HUD overrides: the port's (read only), the player's (edited with F1), and both in order.

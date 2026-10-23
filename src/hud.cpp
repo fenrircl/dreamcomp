@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "dream/render/display_list.h"
 
@@ -193,7 +194,8 @@ void add_tcw(std::vector<std::uint32_t>& v, std::uint32_t t) {
 }  // namespace
 
 void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float aspect, bool edges,
-             bool apply, const Overrides& overrides, Snapshot* snapshot, Stats& stats) {
+             bool apply, const Overrides& overrides, Snapshot* snapshot, Stats& stats,
+             bool squeeze_scene) {
     const float k = apply ? (4.0f / 3.0f) / aspect : 1.0f;  // < 1: squeeze back
     auto type_of = [](const dream::render::Polygon& p) { return p.pcw >> 29; };  // 5 sprite, 4 polygon
     // A primitive drawn at one depth (every vertex the same 1/w): 2D.
@@ -242,6 +244,7 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
 
     // Pass 2: the HUD pieces -- the rule's, plus what an override adds, minus what it stretches.
     std::vector<Item> items;
+    std::unordered_set<const dream::render::Polygon*> hud_polys;
     std::unordered_map<int, Box> stretched;  // per override, for the snapshot
     for (auto& list : frame.lists) {
         for (const auto& p : list) {
@@ -274,9 +277,11 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                         b.override_index = m;
                         add_tcw(b.tcws, texture_word(p));
                     }
+                    hud_polys.insert(&p);
                     continue;
                 }
                 items.push_back({&p, x0, x1, y0, y1, a, m});
+                hud_polys.insert(&p);
                 continue;
             }
             bool hud = eligible(p);
@@ -288,6 +293,7 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                 hud = false;
             if (hud) {
                 items.push_back({&p, x0, x1, y0, y1, Anchor::Auto, -1});
+                hud_polys.insert(&p);
             } else if (snapshot && x1 - x0 >= 2.0f && y1 - y0 >= 2.0f && x1 - x0 <= rule.full_width &&
                        (x1 - x0) * (y1 - y0) < backdrop_area && !(eligible(p) && cover[z] > backdrop_area)) {
                 // Offered for adding: flat pieces of a sensible size (not screen-wide strips or
@@ -301,6 +307,28 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                 b.hud = false;
                 b.tcws.push_back(texture_word(p));
                 snapshot->boxes.push_back(std::move(b));
+            }
+        }
+    }
+
+    // Renderer-side Hor+ (PortInfo::widescreen_scene_squeeze): everything that was not classified
+    // as HUD or marked Stretch is squeezed around the screen centre by the same k. With the wide
+    // render target stretching it back, objects keep their shape and a title that submits its
+    // off-screen geometry gets a wider view. Full-width fades/backdrops stay stretched so they
+    // still cover the whole picture.
+    if (squeeze_scene && apply) {
+        for (auto& list : frame.lists) {
+            for (auto& p : list) {
+                if (hud_polys.contains(&p))
+                    continue;
+                float z = 0.0f;
+                if (flat(p, z))
+                    continue;  // flat 2D belongs to the HUD/menu path; only 3D geometry is widened
+                for (std::uint32_t v = 0; v < p.count; ++v) {
+                    auto& vx = frame.vertices[p.first + v];
+                    vx.x = 320.0f + (vx.x - 320.0f) * k;
+                }
+                ++stats.squeezed;
             }
         }
     }
@@ -406,6 +434,36 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
         }
         snapshot->image_aspect = aspect;
         snapshot->edges = edges;
+    }
+}
+
+void squeeze_2d(dream::render::Frame& frame, float aspect, Stats& stats) {
+    const float k = (4.0f / 3.0f) / aspect;
+    if (k >= 1.0f)
+        return;
+    for (auto& list : frame.lists) {
+        for (auto& p : list) {
+            for (std::uint32_t v = 0; v < p.count; ++v) {
+                auto& vx = frame.vertices[p.first + v];
+                vx.x = 320.0f + (vx.x - 320.0f) * k;
+            }
+            ++stats.squeezed;
+        }
+    }
+}
+
+void squeeze_cinema(dream::render::Frame& frame, float aspect, Stats& stats) {
+    const float wide = aspect / (4.0f / 3.0f);
+    if (wide <= 1.0f)
+        return;
+    for (auto& list : frame.lists) {
+        for (auto& p : list) {
+            for (std::uint32_t v = 0; v < p.count; ++v) {
+                auto& vx = frame.vertices[p.first + v];
+                vx.y = 240.0f + (vx.y - 240.0f) * wide;
+            }
+            ++stats.squeezed;
+        }
     }
 }
 

@@ -255,6 +255,58 @@ int main(int argc, char** argv) {
         CHECK(((f.lists[2][5].tsp >> 13) & 3u) == 0);
     }
 
+    // Renderer-side Hor+: a 3D primitive (z varies) is squeezed; a flat HUD sprite at z=1 is not
+    // squeezed twice and still follows the HUD anchoring rule.
+    {
+        dream::render::Frame f;
+        sprite(f, 600, 20, 620, 40, 1.0f, 7);
+        dream::render::Polygon p;
+        p.first = static_cast<std::uint32_t>(f.vertices.size());
+        p.count = 3;
+        p.pcw = (4u << 29) | 0x8u;
+        const float xs[3] = {-100.0f, 320.0f, 740.0f};
+        const float zs[3] = {0.001f, 0.002f, 0.001f};
+        for (int i = 0; i < 3; ++i) {
+            dream::render::Vertex v;
+            v.x = xs[i];
+            v.y = 200.0f;
+            v.z = zs[i];
+            f.vertices.push_back(v);
+        }
+        f.lists[0].push_back(p);
+        PortInfo::HudRule r = rule;
+        r.overlay_z = 1.0f;
+        r.polygons = true;
+        hud::Overrides none;
+        hud::Stats st;
+        hud::correct(f, r, aspect, true, true, none, nullptr, st, true);
+        CHECK(st.squeezed == 1);
+        CHECK(near(f.vertices[p.first + 0].x, 320 + (-100 - 320) * k));
+        CHECK(near(f.vertices[p.first + 2].x, 320 + (740 - 320) * k));
+        CHECK(near(left_x(f, 0), 640 + (600 - 640) * k));  // HUD, corrected once
+    }
+    // A 2D frame keeps its whole 4:3 layout centred: every primitive is squeezed by k.
+    {
+        dream::render::Frame f;
+        sprite(f, 0, 0, 640, 480, 1.0f, 9);
+        hud::Stats st;
+        hud::squeeze_2d(f, aspect, st);
+        CHECK(st.squeezed == 1);
+        CHECK(near(left_x(f, 0), 320 + (0 - 320) * k));
+    }
+
+    // A letterboxed 2D cutscene: y is scaled by aspect/(4/3), x is left for the wide target.
+    {
+        dream::render::Frame f;
+        sprite(f, 0, 60, 640, 420, 1.0f, 11);
+        hud::Stats st;
+        hud::squeeze_cinema(f, aspect, st);
+        CHECK(st.squeezed == 1);
+        CHECK(near(f.vertices[0].x, 0));
+        CHECK(near(f.vertices[0].y, 0));
+        CHECK(near(f.vertices[2].y, 480));
+    }
+
     if (g_fail)
         std::fprintf(stderr, "%d check(s) failed\n", g_fail);
     else

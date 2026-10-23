@@ -86,6 +86,27 @@ pixel-identical to before, character select aligned in both layouts, attract bac
 width; the namco logo is now un-stretched; some light streaks in the sword scene are squeezed
 toward the centre (still reaching both edges).
 
+## Renderer-side Hor+ (no guest projection hook)
+
+`PortInfo::widescreen_scene_squeeze` is for a title that does not expose a camera/projection
+hook but submits its off-screen world geometry to the PVR instead of culling it on the SH-4.
+Berserk is the first user. `Core::on_frame` classifies a frame with at least 32 non-flat
+primitives as 3D, then `hud::correct(..., squeeze_scene=true)` squeezes every non-HUD, non-flat
+primitive horizontally by `k = (4/3) / aspect` about x=320. The wide render target stretches it
+back, so object proportions are preserved and the extra horizontal area shows geometry that was
+already in the display list. HUD pieces at the game's 2D layer are excluded and anchored as usual.
+
+A frame with no substantial 3D geometry is treated as a menu/FMV/2D screen: `hud::squeeze_2d`
+scales every primitive by `k` about the centre, which cancels the wide target's stretch and
+leaves the original 4:3 picture centred with side bars. If the textured, non-black content box is
+full-width but shorter than the 4:3 frame, the game has already letterboxed a cinematic:
+`hud::squeeze_cinema` scales only y by `aspect/(4/3)`, so the content fills the wide picture and
+the game's own bars are cropped.
+
+Limits: flat 3D pieces (a wall facing the camera, 3D billboards) are not squeezed; a menu with a
+large 3D model may be classified as 3D; and the 32-primitive threshold is a heuristic. Override
+or extend it with measured TA dumps for each title.
+
 ## Mechanism (to reuse elsewhere)
 
 - Engine: `dream::host::Extension::on_frame(render::Frame&)` is called with each decoded display
