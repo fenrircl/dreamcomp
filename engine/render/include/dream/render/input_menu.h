@@ -59,13 +59,18 @@ public:
 
 private:
     // Rows above the bindings, then one row per control, then the rows below.
-    enum Row : int { kDeviceRow = 0, kDeadzoneRow, kRampRow, kFirstBinding };
-    int row_count() const { return kFirstBinding + static_cast<int>(kPadControlCount) + 5; }
+    enum Row : int {
+        kDeviceRow = 0,
+        kDeadzoneRow,
+        kRampRow,
+        kSaveRow,
+        kLoadRow,
+        kSlotRow,
+        kFirstBinding,
+    };
+    int row_count() const { return kFirstBinding + static_cast<int>(kPadControlCount) + 2; }
     int reset_row() const { return kFirstBinding + static_cast<int>(kPadControlCount); }
-    int save_row() const { return reset_row() + 1; }
-    int load_row() const { return reset_row() + 2; }
-    int slot_row() const { return reset_row() + 3; }
-    int close_row() const { return reset_row() + 4; }
+    int close_row() const { return reset_row() + 1; }
     bool on_binding(int row, PadControl& out) const;
 
     Bindings bindings_{};

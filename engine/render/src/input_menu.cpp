@@ -59,11 +59,11 @@ InputMenu::Action InputMenu::activate() {
         return Action::None;
     if (row_ == close_row())
         return Action::Close;
-    if (row_ == save_row())
+    if (row_ == kSaveRow)
         return Action::SaveState;
-    if (row_ == load_row())
+    if (row_ == kLoadRow)
         return Action::LoadState;
-    if (row_ == slot_row())
+    if (row_ == kSlotRow)
         return Action::NextSlot;
     if (row_ == reset_row()) {
         // Only this device's set, so resetting the keyboard cannot silently discard a pad layout
@@ -174,6 +174,11 @@ void InputMenu::draw(u32* rgba, unsigned pitch, unsigned width, unsigned height,
     row(kRampRow, "TRIGGER RAMP", bindings_.trigger_ramp ? "< ON >" : "< OFF >");
 
     y += static_cast<int>(s) * 2;
+    row(kSaveRow, "SAVE DEBUG STATE", "F5");
+    row(kLoadRow, "LOAD DEBUG STATE", "F9");
+    row(kSlotRow, "NEXT DEBUG SLOT", "F6");
+
+    y += static_cast<int>(s) * 2;
     fill_rect(rgba, pitch, width, height, left, y, right - left, static_cast<int>(s), kUiGrey);
     y += static_cast<int>(s) * 3;
 
@@ -186,9 +191,6 @@ void InputMenu::draw(u32* rgba, unsigned pitch, unsigned width, unsigned height,
 
     y += static_cast<int>(s) * 2;
     row(reset_row(), "RESET THIS DEVICE", "");
-    row(save_row(), "SAVE DEBUG STATE", "F5");
-    row(load_row(), "LOAD DEBUG STATE", "F9");
-    row(slot_row(), "NEXT DEBUG SLOT", "F6");
     row(close_row(), "CLOSE", "");
 
     // The footer says how to work the screen, because the screen is the only place that says it.
